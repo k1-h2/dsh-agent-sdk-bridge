@@ -155,12 +155,12 @@ function createChannel(): AsyncIterable<ChannelMessage> & { push(message: Channe
   }
 }
 
-type QueueItem =
+export type QueueItem =
   | { kind: 'chunk', chunk: StreamChunk }
   | { kind: 'turn-end', reason: FinishReason, usage?: TokenUsage }
 
 /** Unbounded FIFO the consumer pushes into and the active turn pumps out. */
-class TurnQueue implements AsyncIterable<QueueItem> {
+export class TurnQueue implements AsyncIterable<QueueItem> {
   private readonly items: QueueItem[] = []
   private resolve: ((result: IteratorResult<QueueItem>) => void) | null = null
   private closed = false

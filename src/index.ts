@@ -1,17 +1,15 @@
 /**
- * Register a {@link QoderAdapter} for each subscription edition on `ctx.llm`:
- * `qoder-cn` backed by the official CN Agent SDK
- * (`@qodercn-ai/qodercn-agent-sdk`) and `qoder-intl` backed by the
- * international one (`@qoder-ai/qoder-agent-sdk`).
+ * Register one adapter per provider on `ctx.llm`: `qoder-cn` and `qoder-intl`
+ * backed by Qoder's CN and international Agent SDKs, and `codebuddy` backed by
+ * Tencent's CodeBuddy Agent SDK.
  *
- * Each edition's inner sessions ride on its own local CLI login state
- * (`qoderclicn` / `qodercli`), so no API key or credential entry is required:
- * the account's model catalog is fetched live from that CLI and split into the
+ * Each provider's inner sessions ride on its own local login state (the Qoder
+ * CLIs, or CodeBuddy's bundled CLI), so no API key or credential entry is
+ * required: the account's model catalog is fetched live and split into the
  * account's built-in models and its custom ones. Everything a deployment may
  * want to tune — session pool size, context window, timeouts, model allow/deny
- * lists, aliases, and the same choices separately for the international
- * edition — is declared in {@link Config}, which DSH renders as this plugin's
- * settings pages.
+ * lists, aliases, per provider — is declared in {@link Config}, which DSH
+ * renders as this plugin's settings pages.
  *
  * ## Settings edits apply without a restart, and that shapes this module
  *
@@ -30,8 +28,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ServerResponse, IncomingMessage } from 'node:http'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER } from './adapter.ts'
+import { CodeBuddyAdapter, CODEBUDDY_PROVIDER } from './codebuddy-adapter.ts'
 import { API_PREFIX, handleApi } from './api.ts'
-import type { QoderBrand } from './brand.ts'
+import type { BrandId } from './brand.ts'
 import { BRANDS } from './brand.ts'
 import { stopSetup } from './setup.ts'
 import type { LiveConfig, ParsedConfig } from './config.ts'
@@ -77,9 +76,17 @@ declare module '@deepseek-ai/cordis' {
 
 export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './adapter.ts'
 export type { ImageRequestReader, QoderAdapterOptions } from './adapter.ts'
-export { BRANDS, CN_BRAND, GLOBAL_BRAND, brandProfile } from './brand.ts'
-export type { BrandProfile, QoderBrand } from './brand.ts'
-export { loadSdk } from './sdk.ts'
+export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './codebuddy-adapter.ts'
+export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts'
+export {
+  CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
+  CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, codeBuddyColdStream,
+  toCodeBuddyModel,
+} from './codebuddy.ts'
+export type { CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts'
+export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './brand.ts'
+export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './brand.ts'
+export { loadCodeBuddySdk, loadSdk } from './sdk.ts'
 export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './usage.ts'
 export type { UsageSnapshot } from './usage.ts'
 export { QoderSession, QoderSessionManager, ToolResultPairing } from './session.ts'
@@ -125,7 +132,8 @@ const REQUEST_IMAGE_MAX_BYTES = 1_048_576
  * used, so a change to these fields is the only thing that needs a republish.
  */
 const STRUCTURAL_FIELDS: ReadonlySet<string> = new Set([
-  'cnEnabled', 'intlEnabled', 'displayName', 'intlDisplayName',
+  'cnEnabled', 'intlEnabled', 'codebuddyEnabled',
+  'displayName', 'intlDisplayName', 'codebuddyDisplayName',
 ])
 
 /** The configurable-provider directory rows for the enabled editions. */
@@ -141,6 +149,9 @@ function directoryFor(live: LiveConfig): {
   }
   if (live.intlEnabled()) {
     rows.push({ provider: QODER_INTL_PROVIDER, displayName: live.intlDisplayName(), settingsNs: NS, settingsPath: [] })
+  }
+  if (live.codebuddyEnabled()) {
+    rows.push({ provider: CODEBUDDY_PROVIDER, displayName: live.codebuddyDisplayName(), settingsNs: NS, settingsPath: [] })
   }
   return rows
 }
@@ -201,13 +212,13 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   }
 
   /**
-   * One adapter per edition.
+   * One adapter per provider.
    *
-   * Two instances, not one instance on two routes: each carries its own model
-   * catalog, warm-session pool, quota reading and user choices, so an intl
-   * request can never be resolved against a CN catalog or share a CN session.
+   * Separate instances, not one instance on several routes: each carries its
+   * own catalog, warm sessions, account reading and user choices, so a request
+   * can never be resolved against another provider's catalog.
    */
-  const adapters: Record<QoderBrand, QoderAdapter> = {
+  const adapters: Record<BrandId, QoderAdapter | CodeBuddyAdapter> = {
     cn: new QoderAdapter({
       ...shared,
       brand: 'cn',
@@ -224,6 +235,20 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       modelContextWindows: live.intlModelContextWindows,
       modelAliases: live.intlModelAliases,
     }),
+    codebuddy: new CodeBuddyAdapter({
+      maxSessions: live.maxSessions,
+      modelCacheTtlMs: live.modelCacheTtlMs,
+      catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
+      toolResultTimeoutMs: live.toolResultTimeoutMs,
+      abortGraceMs: live.abortGraceMs,
+      defaultMaxTokens: live.defaultMaxTokens,
+      defaultReasoningEffort: live.defaultReasoningEffort,
+      displayName: live.codebuddyDisplayName,
+      region: live.codebuddyRegion,
+      disabledModels: live.codebuddyDisabledModels,
+      modelContextWindows: live.codebuddyModelContextWindows,
+      modelAliases: live.codebuddyModelAliases,
+    }),
   }
 
   ctx.inject(['attachments'], (scope) => {
@@ -233,27 +258,32 @@ export function apply(ctx: Context, config: ParsedConfig): void {
 
   // Routes and the provider directory are the two shapes a live value cannot
   // reach on its own: which provider ids exist, and the labels the selection
-  // surfaces render. A disabled edition must own neither, so both are kept in
+  // surfaces render. A disabled provider must own neither, so both are kept in
   // step with the switches rather than registered once for the process lifetime.
-  const routes: Partial<Record<QoderBrand, () => void>> = {}
+  const routes: Partial<Record<BrandId, () => void>> = {}
   let directory: ReturnType<typeof ctx.llm.registerConfigurableProviders> | undefined
+
+  const enabled = (id: BrandId): boolean => {
+    if (id === 'cn') return live.cnEnabled()
+    if (id === 'global') return live.intlEnabled()
+    return live.codebuddyEnabled()
+  }
 
   /**
    * Bring the registered routes and the picker directory in line with the
    * current switches and labels.
    *
    * `registerAdapter` refuses an empty provider list, which is why a disabled
-   * edition is *not registered* instead of being registered and then hidden:
+   * provider is *not registered* instead of being registered and then hidden:
    * the route itself has to disappear so no request can reach it and no model
    * list is offered for it. Turning it back on registers a fresh handle.
    */
   const syncRegistration = (): void => {
     for (const brand of BRANDS) {
-      const enabled = brand.id === 'cn' ? live.cnEnabled() : live.intlEnabled()
       const current = routes[brand.id]
-      if (enabled && current === undefined) {
+      if (enabled(brand.id) && current === undefined) {
         routes[brand.id] = ctx.llm.registerAdapter([brand.provider], adapters[brand.id])
-      } else if (!enabled && current !== undefined) {
+      } else if (!enabled(brand.id) && current !== undefined) {
         current()
         delete routes[brand.id]
       }
@@ -291,6 +321,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   ctx.effect(() => () => {
     adapters.cn.close()
     adapters.global.close()
+    ;(adapters.codebuddy as CodeBuddyAdapter).close()
   }, 'llm-qoder-cn.sessions')
 
   // A CLI helper still running when this plugin is reloaded or removed would

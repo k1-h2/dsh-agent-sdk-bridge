@@ -1,7 +1,7 @@
-# The dsh-agent-sdk-bridge bundle patch: activates the Qoder adapters (CN on
-# `qoder-cn`, international on `qoder-intl`) as a profile layer row over the
+# The dsh-agent-sdk-bridge bundle patch: activates the provider adapters
+# (`qoder-cn`, `qoder-intl`, `codebuddy`) as a profile layer row over the
 # profile root. The user's profile cordis.patch.yml may address this row by id
-# (`llm-qoder-cn`) to override any Config field, including the intl* ones.
+# (`llm-qoder-cn`) to override any Config field, including intl* and codebuddy*.
 - insert:
     - id: llm-qoder-cn
       name: 'dsh-agent-sdk-bridge'

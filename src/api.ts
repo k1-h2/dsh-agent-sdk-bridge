@@ -1,75 +1,52 @@
 /**
- * The settings page's data source, served same-origin.
+ * The settings pages' data source, served same-origin.
  *
- * The page cannot read the model catalog from the config form: the catalog is
- * fetched live from the Qoder CLI, while the form only carries what the user
+ * The pages cannot read the model catalog from the config form: the catalog is
+ * fetched live from the provider, while the form only carries what the user
  * stored. So the host answers these JSON routes:
  *
- * - `GET <prefix>/models?brand=cn|global` — every model that account exposes,
- *   each with its enabled state, the window it will use, and the windows it may
- *   use.
- * - `GET <prefix>/usage?brand=cn|global[&fresh=1]` — the account's quota and
- *   usage, as the Qoder clients display them.
- * - `GET <prefix>/setup?brand=cn|global` — state of that edition's CLI helper
- *   run, including what it printed.
- * - `POST <prefix>/setup` — start that helper:
- *   `{"brand":"cn"|"global","mode":"configure"|"login"}`.
+ * - `GET <prefix>/models?brand=cn|global|codebuddy` — the account's models,
+ *   each with its enabled state and the windows it may use.
+ * - `GET <prefix>/usage?brand=...` — the account reading. Qoder returns quota;
+ *   CodeBuddy returns the signed-in account (its SDK exposes no quota call).
+ * - `GET/POST <prefix>/setup` — the Qoder CLI install/login/uninstall helper.
+ * - `GET/POST <prefix>/auth` — CodeBuddy browser login/logout per region.
  *
- * Both editions answer through the same routes because the page and the host
- * are one origin; the `brand` parameter selects which adapter answers, and an
- * unknown value is refused rather than defaulted, so a typo cannot silently
- * read the other account's data.
- *
- * Config writes deliberately do NOT come through here. The browser half already
- * holds a revision-fenced form for this plugin's config namespace
- * (`ctx.configForms.get(ns)`), and routing every change through it means one
- * write path, one revision fence, and no second owner of the same document. A
- * host-side write would have to reach into the settings service and could race
- * the form. The `/setup` pair is not a config write: it starts a bundled script
- * and reports its output.
+ * Config writes deliberately do NOT come through here. The browser half holds
+ * a revision-fenced form for this plugin's namespace (`ctx.configForms`), and
+ * routing every change through it means one write path and one revision fence.
  *
  * @module dsh-agent-sdk-bridge/api
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { QoderAdapter } from './adapter.ts'
-import type { QoderBrand } from './brand.ts'
-import { isQoderBrand } from './brand.ts'
+import type { CodeBuddyAdapter } from './codebuddy-adapter.ts'
+import type { BrandId, CodeBuddyRegion } from './brand.ts'
+import { isBrandId, isCodeBuddyRegion } from './brand.ts'
 import { priceFactorOf } from './models.ts'
 import { isSetupMode, readSetupStatus, startSetup } from './setup.ts'
 
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
 export const API_PREFIX = '/api/llm-qoder-cn'
 
-/** One model row as the page renders it. */
-interface ModelRow {
-  /** Qoder model id, the identity every write uses. */
+/** One model row as a settings page renders it. */
+export interface ModelRow {
   id: string
-  /** Display name. */
   name: string
-  /** Model description, when upstream provides one. */
   description?: string
-  /** Whether the user currently allows this model in the picker. */
   enabled: boolean
-  /** Whether the model accepts image input. */
   vision: boolean
-  /** Window the requests will actually use, in tokens. */
   contextWindow: number
-  /** Windows the user may choose from, ascending. Always contains the current one. */
   contextWindows: number[]
-  /** Upstream's own window for this model, i.e. what "default" means here. */
   defaultContextWindow: number
-  /** The user's explicit choice, or undefined when following upstream. */
   override?: number
-  /**
-   * Credit multiplier upstream quotes for this model; `0` means free. Absent
-   * when upstream quoted none, so the page shows no suffix rather than a
-   * fabricated one.
-   */
   priceFactor?: number
-  /** Whether the model supports a reasoning-effort choice. */
   reasoning: boolean
 }
+
+/** The adapters the API can reach, one per provider route. */
+export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter>>
 
 /** Answer one request with JSON. */
 function send(res: ServerResponse, status: number, payload: unknown): void {
@@ -82,12 +59,7 @@ function send(res: ServerResponse, status: number, payload: unknown): void {
   res.end(body)
 }
 
-/**
- * Build the model rows: the live catalog joined with the user's choices.
- *
- * @param adapter - the adapter owning the live catalog and the resolved config.
- * @returns one row per model the account exposes, in catalog order.
- */
+/** Build model rows for a Qoder adapter. */
 export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
   const live = await adapter.describeCatalog()
   return live.map(entry => {
@@ -97,8 +69,6 @@ export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
         ? Math.max(...entry.availableContextWindows)
         : entry.maxInputTokens)
       ?? 200_000
-    // Offer upstream's declared windows, plus the effective one so the select
-    // never shows a value it cannot re-select.
     const choices = new Set<number>(entry.availableContextWindows ?? [])
     choices.add(upstream)
     if (override !== undefined) choices.add(override)
@@ -119,11 +89,32 @@ export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
   })
 }
 
-/**
- * Largest request body this route accepts. The only body in the API is a
- * two-key JSON object, so anything bigger is either a bug or an attack.
- */
-const MAX_BODY_BYTES = 1024
+/** Build model rows for the CodeBuddy adapter. */
+export async function buildCodeBuddyRows(adapter: CodeBuddyAdapter): Promise<ModelRow[]> {
+  const live = await adapter.describeCatalog()
+  return live.map(entry => {
+    const override = adapter.contextWindowFor(entry.id)
+    const choices = new Set<number>(entry.contextWindows)
+    choices.add(entry.defaultContextWindow)
+    if (override !== undefined) choices.add(override)
+    return {
+      id: entry.id,
+      name: entry.name,
+      ...entry.description === undefined ? {} : { description: entry.description },
+      enabled: !adapter.isModelDisabled(entry.id),
+      vision: entry.vision,
+      contextWindow: override ?? entry.defaultContextWindow,
+      contextWindows: [...choices].sort((a, b) => a - b),
+      defaultContextWindow: entry.defaultContextWindow,
+      ...override === undefined ? {} : { override },
+      ...entry.priceFactor === undefined ? {} : { priceFactor: entry.priceFactor },
+      reasoning: (entry.reasoningEfforts?.length ?? 0) > 0,
+    }
+  })
+}
+
+/** Largest request body this route accepts. */
+const MAX_BODY_BYTES = 2048
 
 /** Read and parse a small JSON request body. */
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -141,22 +132,22 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 /** The brand a query-string or body selected, or undefined when it named none. */
-function brandFrom(value: unknown): QoderBrand | undefined {
+function brandFrom(value: unknown): BrandId | undefined {
   if (value === null || value === undefined || value === '') return 'cn'
-  return isQoderBrand(value) ? value : undefined
+  return isBrandId(value) ? value : undefined
 }
 
-/**
- * Handle one request under {@link API_PREFIX}.
- *
- * @param req - the incoming request.
- * @param res - the response this handler owns.
- * @param adapters - one adapter per edition; `brand` selects which answers.
- */
+/** A CodeBuddy region from a query or body, defaulting to the international one. */
+function regionFrom(value: unknown): CodeBuddyRegion | undefined {
+  if (value === null || value === undefined || value === '') return 'global'
+  return isCodeBuddyRegion(value) ? value : undefined
+}
+
+/** Handle one request under {@link API_PREFIX}. */
 export async function handleApi(
   req: IncomingMessage,
   res: ServerResponse,
-  adapters: Readonly<Record<QoderBrand, QoderAdapter>>,
+  adapters: AdapterMap,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -165,20 +156,19 @@ export async function handleApi(
     const queryBrand = brandFrom(url.searchParams.get('brand'))
 
     if (queryBrand === undefined) {
-      send(res, 400, { error: 'brand 只接受 cn 或 global' })
+      send(res, 400, { error: 'brand 只接受 cn、global 或 codebuddy' })
       return
     }
     const adapter = adapters[queryBrand]
+    const codebuddy = queryBrand === 'codebuddy' ? adapter as CodeBuddyAdapter : undefined
 
     if (path === '/models' && method === 'GET') {
-      // `?fresh=1` is the page's refresh button. The cached list is precisely
-      // what a user wants to escape once the CLI's own state just changed.
       if (url.searchParams.get('fresh') === '1') adapter.invalidateCatalog()
-      const models = await buildRows(adapter)
-      // An empty list with a reason is a configuration problem the page can
-      // explain (missing SDK, signed-out CLI); an empty list alone is not.
-      const notice = models.length === 0 ? adapter.catalogError() : undefined
-      send(res, 200, { brand: queryBrand, models, ...notice === undefined ? {} : { notice } })
+      const rows = codebuddy !== undefined
+        ? await buildCodeBuddyRows(codebuddy)
+        : await buildRows(adapter as QoderAdapter)
+      const notice = rows.length === 0 ? adapter.catalogError() : undefined
+      send(res, 200, { brand: queryBrand, models: rows, ...notice === undefined ? {} : { notice } })
       return
     }
 
@@ -188,23 +178,84 @@ export async function handleApi(
       return
     }
 
-    if (path === '/setup') {
+    if (path === '/auth') {
       if (method === 'GET') {
-        send(res, 200, readSetupStatus(queryBrand))
+        if (codebuddy === undefined) {
+          send(res, 404, { error: '该 provider 没有 CodeBuddy 登录流程' })
+          return
+        }
+        const region = regionFrom(url.searchParams.get('region'))
+        if (region === undefined) {
+          send(res, 400, { error: 'region 只接受 global 或 cn' })
+          return
+        }
+        send(res, 200, { brand: 'codebuddy', ...codebuddy.authStatus(region) })
         return
       }
       if (method === 'POST') {
-        let body: unknown
+        let body: { brand?: unknown, region?: unknown, action?: unknown }
         try {
-          body = (await readJson(req) as { brand?: unknown, mode?: unknown } | null) ?? {}
+          body = ((await readJson(req)) ?? {}) as { brand?: unknown, region?: unknown, action?: unknown }
         } catch (error) {
           send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
           return
         }
-        const parsed = body as { brand?: unknown, mode?: unknown }
+        // A POST selects its provider in the body: the page never puts the
+        // brand in the URL for writes.
+        if (brandFrom(body.brand) !== 'codebuddy') {
+          send(res, 400, { error: '该 provider 没有 CodeBuddy 登录流程' })
+          return
+        }
+        const cb = adapters.codebuddy as CodeBuddyAdapter
+        const region = regionFrom(body.region)
+        if (region === undefined) {
+          send(res, 400, { error: 'region 只接受 global 或 cn' })
+          return
+        }
+        if (body.action === 'logout') {
+          const result = await cb.logout(region)
+          if (!result.ok) {
+            send(res, 500, { error: result.error })
+            return
+          }
+          send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
+          return
+        }
+        if (body.action !== 'login') {
+          send(res, 400, { error: 'action 只接受 login 或 logout' })
+          return
+        }
+        const started = cb.startLogin(region)
+        if (started.started === false) {
+          send(res, 409, { error: started.error })
+          return
+        }
+        send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
+        return
+      }
+    }
+
+    if (path === '/setup') {
+      if (codebuddy !== undefined) {
+        send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
+        return
+      }
+      const qoder = adapter as QoderAdapter
+      if (method === 'GET') {
+        send(res, 200, readSetupStatus(queryBrand as 'cn' | 'global'))
+        return
+      }
+      if (method === 'POST') {
+        let parsed: { brand?: unknown, mode?: unknown }
+        try {
+          parsed = ((await readJson(req)) ?? {}) as { brand?: unknown, mode?: unknown }
+        } catch (error) {
+          send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
+          return
+        }
         const postBrand = brandFrom(parsed.brand)
-        if (postBrand === undefined) {
-          send(res, 400, { error: 'brand 只接受 cn 或 global' })
+        if (postBrand === undefined || postBrand === 'codebuddy') {
+          send(res, 400, { error: '该 brand 没有 CLI 安装脚本' })
           return
         }
         if (!isSetupMode(parsed.mode)) {
@@ -212,11 +263,9 @@ export async function handleApi(
           return
         }
         const result = startSetup(postBrand, parsed.mode, code => {
-          // A run that installed or signed into the CLI changed what the catalog
-          // should hold, and an empty catalog is cached like any other answer.
           if (code === 0) {
-            adapters[postBrand].invalidateCatalog()
-            adapters[postBrand].invalidateUsage()
+            qoder.invalidateCatalog()
+            qoder.invalidateUsage()
           }
         })
         if (!result.started) {
@@ -229,7 +278,7 @@ export async function handleApi(
       }
     }
 
-    send(res, method === 'GET' ? 404 : 405, { error: method === 'GET' ? 'not found' : '只支持读取，以及 POST /setup' })
+    send(res, method === 'GET' ? 404 : 405, { error: method === 'GET' ? 'not found' : '不支持的写入路径' })
   } catch (error) {
     send(res, 500, { error: error instanceof Error ? error.message : String(error) })
   }

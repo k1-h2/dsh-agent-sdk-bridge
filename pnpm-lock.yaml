@@ -17,6 +17,9 @@ importers:
       '@qodercn-ai/qodercn-agent-sdk':
         specifier: ^1.0.51
         version: 1.0.51(zod@4.6.5)
+      '@tencent-ai/agent-sdk':
+        specifier: ^0.3.289
+        version: 0.3.289(zod@4.6.5)
       zod:
         specifier: ^4.4.3
         version: 4.6.5
@@ -47,6 +50,11 @@ importers:
         version: 4.1.11(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5))
 
 packages:
+
+  '@agentclientprotocol/sdk@1.7.0':
+    resolution: {integrity: sha512-ZORuxsuEnLjRly7t6Ad7zAsWitjWsyprswyPUHz/yycPb+tTm3DGa8XheaHhRXqX8LS9snuxaYavXSRA50TlHw==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@deepseek-ai/cordis@4.0.4':
     resolution: {integrity: sha512-obgyxqWAmFn3Re8kvsuUnyW+ihrz6eJCnJO4fh1cQzDtmPYz/zzVeUkH9R94I0OwSVOocK67Kgakm04j/oQXzg==}
@@ -240,6 +248,11 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tencent-ai/agent-sdk@0.3.289':
+    resolution: {integrity: sha512-aHuKvIFN7RnRvvHL+P7HRlqJfWMH4Lk0CmEew6TOXx1xYvU1Js+yKqvmL8tjax/8BWMFRYL975oMqupFDPxN5A==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1032,6 +1045,10 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
+  uuidv7@1.2.1:
+    resolution: {integrity: sha512-4kPkK3/XTQW9Hbm4CaqfICn+kY9LJtDVEOfgsRRra/+n2Ofg4NqzRFceAkxvQ/Ud/6BpHOPzj8cirqM7TzTN5Q==}
+    hasBin: true
+
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
@@ -1155,6 +1172,10 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
+
+  '@agentclientprotocol/sdk@1.7.0(zod@4.6.5)':
+    dependencies:
+      zod: 4.6.5
 
   '@deepseek-ai/cordis@4.0.4':
     dependencies:
@@ -1303,6 +1324,16 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tencent-ai/agent-sdk@0.3.289(zod@4.6.5)':
+    dependencies:
+      '@agentclientprotocol/sdk': 1.7.0(zod@4.6.5)
+      '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.5)
+      uuidv7: 1.2.1
+      zod: 4.6.5
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
 
   '@types/chai@5.2.3':
     dependencies:
@@ -1994,6 +2025,8 @@ snapshots:
   undici-types@6.21.0: {}
 
   unpipe@1.0.0: {}
+
+  uuidv7@1.2.1: {}
 
   vary@1.1.2: {}
 

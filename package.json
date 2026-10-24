@@ -1,8 +1,8 @@
 {
   "name": "dsh-agent-sdk-bridge",
   "displayName": "Agent SDK Bridge",
-  "description": "DeepSeek Harness LLM adapter bridge. It currently serves Qoder CN and Qoder International subscriptions through their official Agent SDKs: it reuses the local qoderclicn / qodercli login, shows the account quota the Qoder clients display, and exposes a fully configurable settings page per edition.",
-  "version": "1.1.0",
+  "description": "DeepSeek Harness LLM adapter bridge for Qoder CN, Qoder International and Tencent CodeBuddy subscriptions. It reuses each provider's own SDK and CLI login, shows the Qoder account quota, exposes per-provider settings pages, and supports CodeBuddy's international and mainland login regions.",
+  "version": "1.2.0",
   "type": "module",
   "license": "MIT",
   "author": "k1-h2",
@@ -15,6 +15,8 @@
     "qoder",
     "qoder-cn",
     "qoder-international",
+    "codebuddy",
+    "codebuddy-code",
     "quota",
     "model-provider",
     "agent-sdk"
@@ -76,6 +78,7 @@
   "dependencies": {
     "@qoder-ai/qoder-agent-sdk": "^1.0.56",
     "@qodercn-ai/qodercn-agent-sdk": "^1.0.51",
+    "@tencent-ai/agent-sdk": "^0.3.289",
     "zod": "^4.4.3"
   },
   "devDependencies": {

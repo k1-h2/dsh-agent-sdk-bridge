@@ -17,6 +17,7 @@
 
 import { isVolatile } from '@deepseek-ai/cosmokit'
 import z from '@deepseek-ai/schemastery'
+import type { CodeBuddyRegion } from './brand.ts'
 
 /**
  * The plugin configuration as authored in a profile patch.
@@ -41,6 +42,8 @@ export interface Config {
   cnEnabled?: boolean
   /** Whether the international edition is served; same semantics as {@link cnEnabled}. */
   intlEnabled?: boolean
+  /** Whether CodeBuddy is served; same semantics as {@link cnEnabled}. */
+  codebuddyEnabled?: boolean
 
   // ── Models: the only settings most users touch ──────────────────────────
   /**
@@ -90,6 +93,18 @@ export interface Config {
    * Display name of the international provider group in the model picker.
    */
   intlDisplayName?: string
+
+  // ── CodeBuddy ───────────────────────────────────────────────────────────
+  /** Which CodeBuddy login region the sessions use. */
+  codebuddyRegion?: CodeBuddyRegion
+  /** Display name of the CodeBuddy provider group in the model picker. */
+  codebuddyDisplayName?: string
+  /** Model ids the user switched OFF for CodeBuddy. */
+  codebuddyDisabledModels?: string[]
+  /** Per-model context window for CodeBuddy, keyed by model id. */
+  codebuddyModelContextWindows?: Record<string, number>
+  /** Extra model aliases for CodeBuddy. */
+  codebuddyModelAliases?: Record<string, string>
 
   // ── Advanced: sensible defaults, rarely changed ─────────────────────────
   /**
@@ -171,6 +186,7 @@ export const Config = z.object({
   // ── 版本开关：控制哪个设置页与模型分组存在 ─────────────────────────────
   cnEnabled: z.boolean().default(true).description('启用 Qoder CN。关闭后该设置页、模型列表与 provider 路由都会移除；已保存的模型选择会保留。').volatile(),
   intlEnabled: z.boolean().default(true).description('启用 Qoder 国际版。关闭后该设置页、模型列表与 provider 路由都会移除；已保存的模型选择会保留。').volatile(),
+  codebuddyEnabled: z.boolean().default(true).description('启用 CodeBuddy。关闭后该设置页、模型列表与 provider 路由都会移除；登录态与模型选择会保留。').volatile(),
 
   // ── Models: the only settings most users touch ──────────────────────────
   // These two are the model page's data source. The settings page renders the
@@ -184,6 +200,13 @@ export const Config = z.object({
   intlModelContextWindows: z.dict(z.number()).default({}).description('国际版按模型指定的上下文窗口（token 数）。').volatile(),
   intlModelAliases: z.dict(z.string()).default({}).description('国际版额外的模型别名映射：DSH 侧名称 → Qoder 模型 ID。').volatile(),
   intlDisplayName: z.string().default('Qoder 国际版').description('模型选择器里国际版分组的名称。').volatile(),
+
+  // ── CodeBuddy：一个接入，两种登录区域 ──────────────────────────────────
+  codebuddyRegion: z.string().default('global').description('CodeBuddy 登录区域：global（国际版，codebuddy.ai）或 cn（国内版，copilot.tencent.com）。切换后使用对应区域的登录态。').volatile(),
+  codebuddyDisplayName: z.string().default('CodeBuddy').description('模型选择器里 CodeBuddy 分组的名称。').volatile(),
+  codebuddyDisabledModels: z.array(z.string()).default([]).description('CodeBuddy 已关闭的模型 ID 列表。').volatile(),
+  codebuddyModelContextWindows: z.dict(z.number()).default({}).description('CodeBuddy 按模型指定的上下文窗口（token 数）。').volatile(),
+  codebuddyModelAliases: z.dict(z.string()).default({}).description('CodeBuddy 额外的模型别名映射：DSH 侧名称 → CodeBuddy 模型 ID。').volatile(),
 
   // ── 高级：一般无需改动 ─────────────────────────────────────────────────
   displayName: z.string().default('Qoder CN').description('模型选择器里主分组的名称。同时使用多个 Qoder 账号时可区分。').volatile(),
@@ -202,6 +225,8 @@ export const Config = z.object({
 export interface ResolvedConfig {
   cnEnabled: boolean
   intlEnabled: boolean
+  codebuddyEnabled: boolean
+  codebuddyRegion: CodeBuddyRegion
   displayName: string
   maxSessions: number
   modelCacheTtlMs: number
@@ -218,6 +243,10 @@ export interface ResolvedConfig {
   intlDisabledModels: readonly string[]
   intlModelContextWindows: Readonly<Record<string, number>>
   intlModelAliases: Readonly<Record<string, string>>
+  codebuddyDisplayName: string
+  codebuddyDisabledModels: readonly string[]
+  codebuddyModelContextWindows: Readonly<Record<string, number>>
+  codebuddyModelAliases: Readonly<Record<string, string>>
 }
 
 /**
@@ -268,6 +297,8 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
   return {
     cnEnabled: () => bool(field('cnEnabled'), true),
     intlEnabled: () => bool(field('intlEnabled'), true),
+    codebuddyEnabled: () => bool(field('codebuddyEnabled'), true),
+    codebuddyRegion: () => field('codebuddyRegion') === 'cn' ? 'cn' : 'global',
     displayName: () => nonEmpty(field('displayName'), 'Qoder CN'),
     maxSessions: () => positive(field('maxSessions'), 8),
     modelCacheTtlMs: () => positive(field('modelCacheTtlSeconds'), 300) * 1_000,
@@ -288,6 +319,10 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     intlDisabledModels: () => stringList(field('intlDisabledModels')),
     intlModelContextWindows: () => numberMap(field('intlModelContextWindows')),
     intlModelAliases: () => stringMap(field('intlModelAliases')),
+    codebuddyDisplayName: () => nonEmpty(field('codebuddyDisplayName'), 'CodeBuddy'),
+    codebuddyDisabledModels: () => stringList(field('codebuddyDisabledModels')),
+    codebuddyModelContextWindows: () => numberMap(field('codebuddyModelContextWindows')),
+    codebuddyModelAliases: () => stringMap(field('codebuddyModelAliases')),
   }
 }
 
@@ -307,6 +342,8 @@ export function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig 
   return {
     cnEnabled: live.cnEnabled(),
     intlEnabled: live.intlEnabled(),
+    codebuddyEnabled: live.codebuddyEnabled(),
+    codebuddyRegion: live.codebuddyRegion(),
     displayName: live.displayName(),
     maxSessions: live.maxSessions(),
     modelCacheTtlMs: live.modelCacheTtlMs(),
@@ -323,6 +360,10 @@ export function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig 
     intlDisabledModels: live.intlDisabledModels(),
     intlModelContextWindows: live.intlModelContextWindows(),
     intlModelAliases: live.intlModelAliases(),
+    codebuddyDisplayName: live.codebuddyDisplayName(),
+    codebuddyDisabledModels: live.codebuddyDisabledModels(),
+    codebuddyModelContextWindows: live.codebuddyModelContextWindows(),
+    codebuddyModelAliases: live.codebuddyModelAliases(),
   }
 }
 

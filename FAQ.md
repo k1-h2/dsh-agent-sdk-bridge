@@ -12,6 +12,19 @@
 不可用。额度读取走的是 CLI 自己的凭证，所以先确认对应版本的 `status` 能列出用户名；点「刷新额度」
 可重试。它失败不会影响模型列表和对话。
 
+**CodeBuddy 页面显示「尚未登录」，但模型列表有内容？** CodeBuddy 的模型目录在未登录时也能读出
+（SDK 返回公共目录），真正的限制发生在发起对话时。请在页面顶部选择「国际版」或「国内版」，
+点「登录」并在浏览器完成授权；登录成功后卡片会显示账号，对话才可用。两个区域的账号与目录独立，
+切换区域需要用对应账号重新登录。
+
+**CodeBuddy 为什么没有额度卡片？** 它的 Agent SDK 只提供账号信息与逐轮 token 用量，没有 Qoder
+那样的额度查询接口（`getUsageInfo`）。插件不会自己拼一个近似值，因此卡片只显示登录账号，并注明
+这一点。
+
+**CodeBuddy 能用企业域名 / IOA 登录吗？** 不能。插件只暴露 `global`（codebuddy.ai）与 `cn`
+（copilot.tencent.com）两种公共登录区域；SDK 里的 `ioa`、`cloudhosted`、`selfhosted` 需要企业
+端点和额外凭据，不在本插件范围内。
+
 **缓存命中一直显示 0%？** v1.0.5 已修。根因不在映射：CLI 每轮都算出了真实用量，但在把用量帧
 送出来之前会**主动清零四个 token 计数**（`input_tokens` / `output_tokens` /
 `cache_read_input_tokens` / `cache_creation_input_tokens`），只留 `credits` 与

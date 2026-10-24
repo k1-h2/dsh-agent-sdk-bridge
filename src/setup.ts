@@ -31,7 +31,7 @@ export const SCRIPT_NAME = 'setup-qoderclicn.bat'
 
 /** The helper script for one edition. */
 export function scriptNameOf(brand: QoderBrand): string {
-  return brandProfile(brand).setupScript
+  return brandProfile(brand).setupScript ?? SCRIPT_NAME
 }
 
 /** What the page may ask for: install/sign in, only sign in, or uninstall. */

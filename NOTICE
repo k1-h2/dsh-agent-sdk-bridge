@@ -26,10 +26,10 @@ MIT 不要求衍生作品沿用同一许可（无 copyleft 条款），但本项
    配置目录 `.qoder-cn`、`QODERCN_*`）；v1.1.0 起把国际版包也装了回来，作为**另一个独立
    adapter** 与 CN 并行工作，而不是二选一。品牌差异集中在 `src/brand.ts`，其余代码按 brand
    参数化。两个包的公开 API 一致，故共用同一套会话、目录与额度代码。
-2. **两个 provider id**：注册 `qoder-cn` 与 `qoder-intl` 两条路由（上游为 `qoder`，另有
-   `qoder-byok` 承载账号自己添加的自带 Key 模型）。本项目用不到那批自定义模型——DSH 只走订阅
-   自己的目录——因此在目录层丢弃上游标记为 `user`/`custom` 的条目，每个版本只有一个分组。
-   id 与上游不同，两者可在同一 profile 中共存而不冲突。
+2. **三个 provider id**：注册 `qoder-cn`、`qoder-intl` 与 `codebuddy` 三条路由（上游为 `qoder`，
+   另有 `qoder-byok` 承载账号自己添加的自带 Key 模型）。本项目用不到那批自定义模型——DSH 只走
+   订阅自己的目录——因此在目录层丢弃上游标记为 `user`/`custom` 的条目。id 与上游不同，可在同一
+   profile 中共存而不冲突。
 3. **可配置设置面**：新增 `src/config.ts`，声明带中文说明的配置项（CN 与国际版各一套模型开关 /
    窗口 / 别名）。设置页由本插件
    自带的 `client.js` 注册为**独立顶层导航项**（`settings.section`）——DSH 的自动配置页渲染在
@@ -70,6 +70,12 @@ MIT 不要求衍生作品沿用同一许可（无 copyleft 条款），但本项
    `eol=crlf`），且必须纯 ASCII——实测在**没有控制台**的方式下调用（`windowsHide` + 管道，
    正是插件的调用方式）时，`cmd.exe` 会在含多字节字符的行上算错文件位置，把半行当命令执行；
    同一份文件在真实控制台里则正常。上游与本仓库此前都不涉及本地进程执行。
+
+10. **CodeBuddy 接入**：新增 `@tencent-ai/agent-sdk` 依赖与 `src/codebuddy*.ts`。该 SDK 随包
+    自带 CodeBuddy CLI，因此没有安装脚本；登录用 SDK 的 `unstable_v2_authenticate`，只暴露公共的
+    国际版（`external`）与国内版（`internal`）两种区域，企业 `ioa` / `cloudhosted` / `selfhosted`
+    不在范围内。模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；
+    其 SDK 没有额度查询接口，设置页因此只显示账号，不伪造额度。
 
 ## 上游的原始文件
 

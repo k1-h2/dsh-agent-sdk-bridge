@@ -1,17 +1,15 @@
 /**
- * Register a {@link QoderAdapter} for each subscription edition on `ctx.llm`:
- * `qoder-cn` backed by the official CN Agent SDK
- * (`@qodercn-ai/qodercn-agent-sdk`) and `qoder-intl` backed by the
- * international one (`@qoder-ai/qoder-agent-sdk`).
+ * Register one adapter per provider on `ctx.llm`: `qoder-cn` and `qoder-intl`
+ * backed by Qoder's CN and international Agent SDKs, and `codebuddy` backed by
+ * Tencent's CodeBuddy Agent SDK.
  *
- * Each edition's inner sessions ride on its own local CLI login state
- * (`qoderclicn` / `qodercli`), so no API key or credential entry is required:
- * the account's model catalog is fetched live from that CLI and split into the
+ * Each provider's inner sessions ride on its own local login state (the Qoder
+ * CLIs, or CodeBuddy's bundled CLI), so no API key or credential entry is
+ * required: the account's model catalog is fetched live and split into the
  * account's built-in models and its custom ones. Everything a deployment may
  * want to tune — session pool size, context window, timeouts, model allow/deny
- * lists, aliases, and the same choices separately for the international
- * edition — is declared in {@link Config}, which DSH renders as this plugin's
- * settings pages.
+ * lists, aliases, per provider — is declared in {@link Config}, which DSH
+ * renders as this plugin's settings pages.
  *
  * ## Settings edits apply without a restart, and that shapes this module
  *
@@ -65,9 +63,13 @@ declare module '@deepseek-ai/cordis' {
 }
 export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './adapter.ts';
 export type { ImageRequestReader, QoderAdapterOptions } from './adapter.ts';
-export { BRANDS, CN_BRAND, GLOBAL_BRAND, brandProfile } from './brand.ts';
-export type { BrandProfile, QoderBrand } from './brand.ts';
-export { loadSdk } from './sdk.ts';
+export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './codebuddy-adapter.ts';
+export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts';
+export { CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, codeBuddyColdStream, toCodeBuddyModel, } from './codebuddy.ts';
+export type { CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts';
+export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './brand.ts';
+export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './brand.ts';
+export { loadCodeBuddySdk, loadSdk } from './sdk.ts';
 export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './usage.ts';
 export type { UsageSnapshot } from './usage.ts';
 export { QoderSession, QoderSessionManager, ToolResultPairing } from './session.ts';
@@ -97,12 +99,18 @@ export declare const inject: string[];
 export declare const Config: import("@deepseek-ai/schemastery").default<Schemastery.ObjectS<NoInfer<{
     cnEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     intlEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
+    codebuddyEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     disabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     modelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     intlModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     intlDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyRegion: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelCacheTtlSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
@@ -116,12 +124,18 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
 }>>, Schemastery.ObjectT<NoInfer<{
     cnEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     intlEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
+    codebuddyEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     disabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     modelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     intlModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     intlDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyRegion: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
+    codebuddyDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelCacheTtlSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;

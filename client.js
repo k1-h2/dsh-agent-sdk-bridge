@@ -1,15 +1,15 @@
 /**
  * dsh-agent-sdk-bridge — browser half.
  *
- * Contributes one top-level settings section per enabled edition (`qoder-cn`,
- * `qoder-intl`), each showing the account quota and then the model list: every
- * model the account exposes, with an on/off switch and a context-window choice,
- * plus a collapsed "advanced" area holding the scalars worth reaching without
- * editing YAML. The plugin manager's page for this bundle carries the two
- * switches that decide which of those sections exist.
+ * Contributes one top-level settings section per enabled provider (`qoder-cn`,
+ * `qoder-intl`, `codebuddy`), each showing its account card and then the model
+ * list: every model the account exposes, with an on/off switch and a
+ * context-window choice, plus a collapsed "advanced" area holding the scalars
+ * worth reaching without editing YAML. The plugin manager's page for this
+ * bundle carries the switches that decide which of those sections exist.
  *
  * The model list cannot come from the config form: it is fetched live from the
- * Qoder CLI. So the page reads `GET <prefix>/models`, which joins that live
+ * provider. So the page reads `GET <prefix>/models`, which joins that live
  * catalog with the user's stored choices, while every change goes back through
  * the host's own config form. The host owns the catalog, so the page never
  * derives state the adapter does not share.
@@ -118,6 +118,27 @@ window.__ModuleLoader__.load({
       pluginOptionsOff: '已关闭',
       pluginOptionsReadOnly: '当前配置不可写',
       pluginOptionsRejected: '宿主拒绝了这次改动；若刚更新过插件，请重启 DSH 后再试',
+      codebuddyNav: 'CodeBuddy',
+      codebuddyTitle: 'CodeBuddy',
+      codebuddyIntro: '腾讯 CodeBuddy 账户的模型。请先在下方选择登录区域并登录，再勾选要启用的模型。',
+      codebuddyNoModels: 'CodeBuddy 账号没有返回任何模型：请确认已选择登录区域并完成登录。',
+      codebuddyAuthTitle: '登录',
+      codebuddyAuthHint: 'CodeBuddy 分国际版与国内版，两边账号与模型目录独立。企业域名登录不在本插件支持范围内。',
+      codebuddyRegionGlobal: '国际版（codebuddy.ai）',
+      codebuddyRegionCn: '国内版（copilot.tencent.com）',
+      codebuddyRegionLabel: '登录区域',
+      codebuddyLogin: '登录',
+      codebuddyLogout: '退出登录',
+      codebuddyLoggingIn: '请在浏览器中完成登录…',
+      codebuddyLoginStarted: '已打开浏览器，完成登录后这里会自动更新。',
+      codebuddyLoginFailed: '登录失败',
+      codebuddyOpenUrl: '手动打开登录页',
+      codebuddyLoggedOut: '已退出登录',
+      codebuddyNotLoggedIn: '未登录',
+      codebuddySignedIn: '已登录',
+      codebuddyAccountUnknown: '账号信息暂不可用',
+      codebuddyNoQuota: 'CodeBuddy SDK 未提供额度查询接口，此处仅显示登录账号。',
+      codebuddyConfirmLogout: '确定要退出当前区域的 CodeBuddy 登录吗？',
       advancedFields: {
         displayName: '分组名称',
         maxSessions: '并发会话数',
@@ -131,6 +152,8 @@ window.__ModuleLoader__.load({
         modelAliases: '模型别名',
         intlDisplayName: '国际版分组名称',
         intlModelAliases: '国际版模型别名',
+        codebuddyDisplayName: 'CodeBuddy 分组名称',
+        codebuddyModelAliases: 'CodeBuddy 模型别名',
       },
     }
     const en = {
@@ -212,6 +235,27 @@ window.__ModuleLoader__.load({
       pluginOptionsOff: 'Off',
       pluginOptionsReadOnly: 'This configuration is read-only',
       pluginOptionsRejected: 'The host rejected this change; if you just updated the plugin, restart DSH and retry',
+      codebuddyNav: 'CodeBuddy',
+      codebuddyTitle: 'CodeBuddy',
+      codebuddyIntro: 'Models for your Tencent CodeBuddy account. Choose a login region below and sign in before enabling models.',
+      codebuddyNoModels: 'The CodeBuddy account returned no models: make sure a region is selected and the browser login completed.',
+      codebuddyAuthTitle: 'Sign in',
+      codebuddyAuthHint: 'CodeBuddy has independent international and mainland accounts with their own model catalogs. Enterprise-domain login is out of scope for this plugin.',
+      codebuddyRegionGlobal: 'International (codebuddy.ai)',
+      codebuddyRegionCn: 'Mainland (copilot.tencent.com)',
+      codebuddyRegionLabel: 'Login region',
+      codebuddyLogin: 'Sign in',
+      codebuddyLogout: 'Sign out',
+      codebuddyLoggingIn: 'Finish the sign-in in your browser…',
+      codebuddyLoginStarted: 'Browser opened; this card updates when the login completes.',
+      codebuddyLoginFailed: 'Sign-in failed',
+      codebuddyOpenUrl: 'Open the sign-in page',
+      codebuddyLoggedOut: 'Signed out',
+      codebuddyNotLoggedIn: 'Not signed in',
+      codebuddySignedIn: 'Signed in',
+      codebuddyAccountUnknown: 'Account details are unavailable',
+      codebuddyNoQuota: 'The CodeBuddy SDK exposes no quota endpoint, so this card shows the signed-in account only.',
+      codebuddyConfirmLogout: 'Sign out of CodeBuddy for the selected region?',
       advancedFields: {
         displayName: 'Group name',
         maxSessions: 'Concurrent sessions',
@@ -225,6 +269,8 @@ window.__ModuleLoader__.load({
         modelAliases: 'Model aliases',
         intlDisplayName: 'International group name',
         intlModelAliases: 'International model aliases',
+        codebuddyDisplayName: 'CodeBuddy group name',
+        codebuddyModelAliases: 'CodeBuddy model aliases',
       },
     }
 
@@ -254,19 +300,22 @@ window.__ModuleLoader__.load({
         ['intlDisplayName', 'text'],
         ['intlModelAliases', 'json'],
       ],
+      codebuddy: [
+        ['codebuddyDisplayName', 'text'],
+        ['codebuddyModelAliases', 'json'],
+      ],
     }
 
     /**
-     * One settings section per edition.
+     * One settings section per provider.
      *
      * They share the page component and the API routes; only the config keys,
-     * the API brand and the copy differ. Keeping them as two registered
-     * sections (rather than tabs inside one) means the shell's nav points a
-     * user straight at the account they care about.
+     * the API brand and the copy differ.
      */
     const BRANDS = [
       {
         id: 'cn',
+        kind: 'qoder',
         settingsId: 'qoder-cn',
         order: 36,
         titleKey: 'title',
@@ -283,6 +332,7 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'global',
+        kind: 'qoder',
         settingsId: 'qoder-intl',
         order: 37,
         titleKey: 'intlTitle',
@@ -295,6 +345,21 @@ window.__ModuleLoader__.load({
           enabled: 'intlEnabled',
           disabled: 'intlDisabledModels',
           windows: 'intlModelContextWindows',
+        },
+      },
+      {
+        id: 'codebuddy',
+        kind: 'codebuddy',
+        settingsId: 'codebuddy',
+        order: 38,
+        titleKey: 'codebuddyTitle',
+        navKey: 'codebuddyNav',
+        introKey: 'codebuddyIntro',
+        noModelsKey: 'codebuddyNoModels',
+        fields: {
+          enabled: 'codebuddyEnabled',
+          disabled: 'codebuddyDisabledModels',
+          windows: 'codebuddyModelContextWindows',
         },
       },
     ]
@@ -624,6 +689,170 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * CodeBuddy's account card: region choice, browser login/logout and the
+     * signed-in account.
+     *
+     * The region is a config write (the host starts the CLI with it); login is
+     * a host-side SDK flow whose URL opens in the browser. While a login runs
+     * the card polls the host, because the credential is written by the CLI
+     * after the browser round trip.
+     */
+    function CodeBuddyCard({ t, ctx, brand, refreshSignal, onSignedIn }) {
+      const form = ctx.configForms.get(NS)
+      const subscribe = useCallback(listener => form.subscribe(listener), [form])
+      const read = useCallback(() => form.getSnapshot(), [form])
+      const snapshot = useSyncExternalStore(subscribe, read)
+      const value = snapshot?.value ?? {}
+      const region = value.codebuddyRegion === 'cn' ? 'cn' : 'global'
+      const [auth, setAuth] = useState(undefined)
+      const [account, setAccount] = useState(undefined)
+      const [error, setError] = useState(undefined)
+      const [busy, setBusy] = useState(false)
+      const ticket = useRef(0)
+      const lastRunning = useRef(false)
+
+      const loadAccount = useCallback(async (fresh = false) => {
+        try {
+          const payload = await api(`/usage?brand=codebuddy${fresh ? '&fresh=1' : ''}`, { timeout: 45_000 })
+          setAccount(payload)
+        } catch (err) {
+          setAccount({ error: String(err?.message ?? err) })
+        }
+      }, [])
+
+      const poll = useCallback(async () => {
+        try {
+          const next = await api(`/auth?brand=codebuddy&region=${region}`, { timeout: 10_000 })
+          setAuth(next)
+          if (lastRunning.current && next.running === false) {
+            lastRunning.current = false
+            if (next.error === undefined) {
+              await loadAccount(true)
+              onSignedIn?.()
+            }
+          }
+          if (next.running === true) lastRunning.current = true
+        } catch (err) {
+          setError(String(err?.message ?? err))
+        }
+      }, [region, loadAccount, onSignedIn])
+
+      useEffect(() => { void poll(); void loadAccount() }, [poll, loadAccount, refreshSignal])
+      useEffect(() => {
+        if (auth?.running !== true) return undefined
+        const timer = setInterval(() => { void poll() }, 1500)
+        return () => clearInterval(timer)
+      }, [auth?.running, poll])
+
+      const setRegion = useCallback(async (next) => {
+        setBusy(true)
+        setError(undefined)
+        try {
+          const accepted = await withDeadline(form.set('codebuddyRegion', next), WRITE_TIMEOUT_MS, t('timeout'))
+          if (accepted === false) throw new Error(t('saveFailed'))
+          setAuth(undefined)
+          await loadAccount(true)
+          onSignedIn?.()
+        } catch (err) {
+          setError(`${t('saveFailed')}：${String(err?.message ?? err)}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [form, loadAccount, onSignedIn, t])
+
+      const startLogin = useCallback(async () => {
+        setBusy(true)
+        setError(undefined)
+        try {
+          const next = await api('/auth', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ brand: 'codebuddy', region, action: 'login' }),
+            timeout: 20_000,
+          })
+          setAuth(next)
+          if (next.running === true) lastRunning.current = true
+        } catch (err) {
+          setError(`${t('codebuddyLoginFailed')}：${String(err?.message ?? err)}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [region, t])
+
+      const logout = useCallback(async () => {
+        if (typeof window.confirm === 'function' && !window.confirm(t('codebuddyConfirmLogout'))) return
+        setBusy(true)
+        setError(undefined)
+        try {
+          setAuth(await api('/auth', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ brand: 'codebuddy', region, action: 'logout' }),
+            timeout: 20_000,
+          }))
+          setAccount(undefined)
+          await loadAccount(true)
+          onSignedIn?.()
+        } catch (err) {
+          setError(String(err?.message ?? err))
+        } finally {
+          setBusy(false)
+        }
+      }, [region, loadAccount, onSignedIn, t])
+
+      const running = auth?.running === true
+      const accountFields = account?.account ?? {}
+      const signedIn = account?.error === undefined
+        && ['email', 'organization', 'subscriptionType'].some(key => typeof accountFields[key] === 'string' && accountFields[key] !== '')
+      const accountText = account?.account === undefined
+        ? (account?.error ?? t('codebuddyAccountUnknown'))
+        : [account.account.email, account.account.organization, account.account.subscriptionType]
+            .filter(part => typeof part === 'string' && part.length > 0)
+            .join(' · ')
+
+      return h('div', { style: css.usageCard },
+        h('div', { style: css.usageHead },
+          h('h3', { style: css.h3 }, t('codebuddyAuthTitle')),
+          h('span', { style: { ...css.note, opacity: 0.7 } }, signedIn ? t('codebuddySignedIn') : t('codebuddyNotLoggedIn')),
+        ),
+        h('div', { style: css.note }, t('codebuddyAuthHint')),
+        h('div', { style: css.usageLine },
+          h('span', { style: css.usageLabel }, t('codebuddyRegionLabel')),
+          h('select', {
+            style: css.select,
+            value: region,
+            disabled: busy || running,
+            onChange: event => { void setRegion(event.target.value) },
+          },
+            h('option', { key: 'global', value: 'global' }, t('codebuddyRegionGlobal')),
+            h('option', { key: 'cn', value: 'cn' }, t('codebuddyRegionCn')),
+          ),
+          h('button', {
+            style: css.btn,
+            disabled: busy || running,
+            onClick: () => void startLogin(),
+          }, running ? t('codebuddyLoggingIn') : t('codebuddyLogin')),
+          signedIn
+            ? h('button', { style: { ...css.btn, ...css.btnAlert }, disabled: busy || running, onClick: () => void logout() }, t('codebuddyLogout'))
+            : null,
+        ),
+        h('div', { style: css.usageLine },
+          h('span', { style: css.usageLabel }, t('usageAccount')),
+          h('span', { style: css.usageValue }, accountText),
+        ),
+        h('div', { style: css.note }, t('codebuddyNoQuota')),
+        typeof auth?.url === 'string' && running
+          ? h('div', { style: css.usageLine },
+              h('a', { href: auth.url, target: '_blank', rel: 'noreferrer', style: css.link }, t('codebuddyOpenUrl')),
+              h('span', { style: css.note }, t('codebuddyLoginStarted')),
+            )
+          : null,
+        auth?.error !== undefined ? h('div', { style: css.err }, `${t('codebuddyLoginFailed')}：${auth.error}`) : null,
+        error !== undefined ? h('div', { style: css.err }, error) : null,
+      )
+    }
+
+    /**
      * The model table plus the advanced block.
      *
      * Each change posts and then adopts the host's returned list, so the page
@@ -920,16 +1149,24 @@ window.__ModuleLoader__.load({
        */
       const renderGuide = () => h('div', { style: css.guide },
         h('div', { style: css.guideText }, t(brand.noModelsKey)),
-        h('button', {
-          style: { ...css.btn, ...css.btnAlert },
-          disabled: setupRunning,
-          onClick: () => void startCliSetup('configure'),
-        }, t('cliRun')),
+        brand.kind === 'codebuddy'
+          ? null
+          : h('button', {
+              style: { ...css.btn, ...css.btnAlert },
+              disabled: setupRunning,
+              onClick: () => void startCliSetup('configure'),
+            }, t('cliRun')),
       )
 
       if (models === undefined) {
         return h('div', { style: css.page },
           h('h2', { style: css.h2 }, t(brand.titleKey)),
+          brand.kind === 'codebuddy'
+            ? h(CodeBuddyCard, {
+                t, ctx, brand, refreshSignal: usageTick,
+                onSignedIn: () => { void load(true); setUsageTick(v => v + 1) },
+              })
+            : null,
           error === undefined
             ? h('div', { style: css.note }, t('loading'))
             : h('div', null,
@@ -991,7 +1228,12 @@ window.__ModuleLoader__.load({
       return h('div', { style: css.page },
         h('h2', { style: css.h2 }, t(brand.titleKey)),
         h('p', { style: css.intro }, t(brand.introKey)),
-        h(UsageCard, { t, brand, refreshSignal: usageTick }),
+        brand.kind === 'codebuddy'
+          ? h(CodeBuddyCard, {
+              t, ctx, brand, refreshSignal: usageTick,
+              onSignedIn: () => { void load(true); setUsageTick(v => v + 1) },
+            })
+          : h(UsageCard, { t, brand, refreshSignal: usageTick }),
 
         // Search row: the field grows, the checkbox sits beside it.
         h('div', { style: css.bar },
@@ -1034,7 +1276,7 @@ window.__ModuleLoader__.load({
         error !== undefined ? h('div', { style: css.err }, error) : null,
         status !== undefined && error === undefined ? h('div', { style: css.note }, status) : null,
 
-        h('div', { style: css.group },
+        brand.kind === 'codebuddy' ? null : h('div', { style: css.group },
           h('h3', { style: css.h3 }, t(brand.cliGroupKey)),
           h('div', { style: css.note }, t(brand.cliHintKey)),
           h('div', { style: { ...css.bar, flexWrap: 'nowrap' } },
@@ -1102,18 +1344,23 @@ window.__ModuleLoader__.load({
         }
       }, [form, t])
 
+      const labelOf = brand => {
+        const key = brand.id === 'cn' ? 'displayName' : brand.id === 'global' ? 'intlDisplayName' : 'codebuddyDisplayName'
+        const fallback = brand.id === 'cn' ? t('nav') : brand.id === 'global' ? t('intlNav') : t('codebuddyNav')
+        const stored = value[key]
+        return typeof stored === 'string' && stored !== '' ? stored : fallback
+      }
+
       if (view !== undefined && view !== 'page') {
         const names = BRANDS
           .filter(brand => value[brand.fields.enabled] !== false)
-          .map(brand => brand.id === 'cn' ? (value.displayName || t('nav')) : (value.intlDisplayName || t('intlNav')))
+          .map(labelOf)
         return h('span', null, names.join(' · '))
       }
 
       const rows = BRANDS.map((brand, index) => {
         const enabled = value[brand.fields.enabled] !== false
-        const name = brand.id === 'cn'
-          ? (typeof value.displayName === 'string' && value.displayName !== '' ? value.displayName : t('nav'))
-          : (typeof value.intlDisplayName === 'string' && value.intlDisplayName !== '' ? value.intlDisplayName : t('intlNav'))
+        const name = labelOf(brand)
         return h('div', {
           key: brand.id,
           style: { ...css.optionRow, ...(index === 0 ? css.optionFirst : {}) },

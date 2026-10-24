@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
 import { API_PREFIX, handleApi } from '../src/api.ts'
 import type { QoderAdapter } from '../src/adapter.ts'
+import type { CodeBuddyAdapter } from '../src/codebuddy-adapter.ts'
 
 /** One live catalog entry the stubbed adapters report. */
 const ENTRY = {
@@ -37,7 +38,26 @@ function adapter(label: string): QoderAdapter {
   } as unknown as QoderAdapter
 }
 
-const ADAPTERS = { cn: adapter('cn'), global: adapter('global') }
+const ADAPTERS = { cn: adapter('cn'), global: adapter('global'), codebuddy: codeBuddyAdapter() }
+
+/** CodeBuddy's catalog uses its own row shape, so it gets its own stub. */
+function codeBuddyAdapter(): CodeBuddyAdapter {
+  return {
+    describeCatalog: async () => [{
+      id: 'cb-model', name: 'CB Model', contextWindows: [200_000, 1_000_000],
+      defaultContextWindow: 200_000, vision: true, reasoningEfforts: ['low', 'high'],
+    }],
+    contextWindowFor: () => undefined,
+    isModelDisabled: () => false,
+    catalogError: () => undefined,
+    usageInfo: async () => ({ at: 1, account: { email: 'cb@example.com' } }),
+    invalidateCatalog: () => {},
+    invalidateUsage: () => {},
+    authStatus: (region: string) => ({ running: false, region }),
+    startLogin: () => ({ started: true }),
+    logout: async () => ({ ok: true }),
+  } as unknown as CodeBuddyAdapter
+}
 
 /** A request the handler can iterate for a POST body. */
 function request(url: string, method = 'GET', body?: unknown): IncomingMessage {
@@ -83,6 +103,38 @@ describe('settings API brand routing', () => {
     const cached = response()
     await handleApi(request(`${API_PREFIX}/usage?brand=cn`), cached.res, ADAPTERS)
     expect(cached.body()).toMatchObject({ brand: 'cn', fresh: false })
+  })
+
+  it('serves the CodeBuddy catalog and account through the same routes', async () => {
+    const models = response()
+    await handleApi(request(`${API_PREFIX}/models?brand=codebuddy`), models.res, ADAPTERS)
+    expect(models.status()).toBe(200)
+    expect(models.body().models[0]).toMatchObject({ id: 'cb-model', vision: true, reasoning: true })
+
+    const account = response()
+    await handleApi(request(`${API_PREFIX}/usage?brand=codebuddy`), account.res, ADAPTERS)
+    expect(account.body()).toMatchObject({ brand: 'codebuddy', account: { email: 'cb@example.com' } })
+  })
+
+  it('starts a CodeBuddy login for the requested region and refuses a bad one', async () => {
+    const started = response()
+    await handleApi(request(`${API_PREFIX}/auth`, 'POST', { brand: 'codebuddy', region: 'cn', action: 'login' }), started.res, ADAPTERS)
+    expect(started.status()).toBe(200)
+    expect(started.body()).toMatchObject({ brand: 'codebuddy', running: false, region: 'cn' })
+
+    const badRegion = response()
+    await handleApi(request(`${API_PREFIX}/auth`, 'POST', { brand: 'codebuddy', region: 'ioa', action: 'login' }), badRegion.res, ADAPTERS)
+    expect(badRegion.status()).toBe(400)
+
+    const qoderAuth = response()
+    await handleApi(request(`${API_PREFIX}/auth?brand=cn`), qoderAuth.res, ADAPTERS)
+    expect(qoderAuth.status()).toBe(404)
+  })
+
+  it('refuses the CLI setup route for CodeBuddy', async () => {
+    const r = response()
+    await handleApi(request(`${API_PREFIX}/setup?brand=codebuddy`), r.res, ADAPTERS)
+    expect(r.status()).toBe(400)
   })
 
   it('refuses a brand it does not serve instead of defaulting to CN', async () => {

@@ -16,7 +16,7 @@
 import { updateVolatile } from '@deepseek-ai/cosmokit'
 import { describe, expect, it } from 'vitest'
 import {
-  Config, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
+  Config, CODEBUDDY_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
 } from '../src/index.ts'
 
 /**
@@ -102,8 +102,8 @@ describe('live config', () => {
     apply(ctx as any, mounted as any)
     const adapter = recorded.adapters[0]
 
-    // One route per edition, each with its own adapter and catalog.
-    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER])
+    // One route per provider, each with its own adapter and catalog.
+    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER])
     expect(adapter.isModelDisabled('auto')).toBe(true)
     expect(adapter.contextWindowFor('auto')).toBe(200_000)
 
@@ -136,18 +136,18 @@ describe('live config', () => {
 
     // The labels are republished through the directory handle, not by
     // re-registering: the provider set never changes any more.
-    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder CN', 'Qoder 国际版'])
+    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder CN', 'Qoder 国际版', 'CodeBuddy'])
     recorded.volatileListener?.([['displayName']])
-    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder 工作号', 'Qoder 国际版'])
-    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER])
+    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder 工作号', 'Qoder 国际版', 'CodeBuddy'])
+    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER])
 
     recorded.replaced.length = 0
     recorded.volatileListener?.([['disabledModels']])
     expect(recorded.replaced).toEqual([])
   })
 
-  it('registers only the editions that are switched on', () => {
-    const mounted = parse({ cnEnabled: false, intlEnabled: true })
+  it('registers only the providers that are switched on', () => {
+    const mounted = parse({ cnEnabled: false, intlEnabled: true, codebuddyEnabled: false })
     const { ctx, recorded } = stubContext()
     apply(ctx as any, mounted as any)
 
@@ -168,9 +168,16 @@ describe('live config', () => {
     expect(recorded.routes).toEqual([QODER_PROVIDER])
     expect(recorded.directory.map(entry => entry.provider)).toEqual([QODER_PROVIDER])
 
-    // Both off is a valid deployment: the plugin stays loaded with no routes.
+    // CodeBuddy is its own provider, not a Qoder edition.
+    updateVolatile(mounted.codebuddyEnabled, parse({ codebuddyEnabled: true }).codebuddyEnabled)
+    recorded.volatileListener?.([['codebuddyEnabled']])
+    expect(recorded.routes).toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER])
+    expect(recorded.directory.map(entry => entry.provider)).toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER])
+
+    // Nothing on is a valid deployment: the plugin stays loaded with no routes.
     updateVolatile(mounted.cnEnabled, parse({ cnEnabled: false }).cnEnabled)
-    recorded.volatileListener?.([['cnEnabled']])
+    updateVolatile(mounted.codebuddyEnabled, parse({ codebuddyEnabled: false }).codebuddyEnabled)
+    recorded.volatileListener?.([['cnEnabled', 'codebuddyEnabled']])
     expect(recorded.routes).toEqual([])
     expect(recorded.directory).toEqual([])
   })
@@ -185,11 +192,15 @@ describe('live config', () => {
       modelContextWindows: live.modelContextWindows(),
       maxSessions: live.maxSessions(),
       defaultReasoningEffort: live.defaultReasoningEffort(),
+      codebuddyEnabled: live.codebuddyEnabled(),
+      codebuddyRegion: live.codebuddyRegion(),
     }).toEqual({
       disabledModels: snapshot.disabledModels,
       modelContextWindows: snapshot.modelContextWindows,
       maxSessions: snapshot.maxSessions,
       defaultReasoningEffort: snapshot.defaultReasoningEffort,
+      codebuddyEnabled: snapshot.codebuddyEnabled,
+      codebuddyRegion: snapshot.codebuddyRegion,
     })
   })
 
@@ -198,8 +209,10 @@ describe('live config', () => {
     expect(live.disabledModels()).toEqual([])
     expect(live.maxSessions()).toBe(8)
     expect(live.defaultReasoningEffort()).toBeUndefined()
-    // Both editions are on unless the profile explicitly switches one off.
+    // Every provider is on unless the profile explicitly switches one off.
     expect(live.cnEnabled()).toBe(true)
     expect(live.intlEnabled()).toBe(true)
+    expect(live.codebuddyEnabled()).toBe(true)
+    expect(live.codebuddyRegion()).toBe('global')
   })
 })

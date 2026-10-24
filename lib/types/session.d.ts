@@ -7,7 +7,7 @@
  * the parked promise so the inner model continues with the result in place.
  * @module dsh-llm-qoder/session
  */
-import type { ContentBlock, GenerateOptions, RequestMessage, StreamChunk, ToolSchema, TokenUsage } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, FinishReason, GenerateOptions, RequestMessage, StreamChunk, ToolSchema, TokenUsage } from '@deepseek-ai/dsh-llm';
 import type { QoderBrand } from './brand.ts';
 import type { Live } from './live.ts';
 /** MCP server name this adapter exposes host tools under. */
@@ -86,6 +86,25 @@ export type ResolvedImages = ReadonlyMap<string, {
     data: string;
     mediaType: string;
 }>;
+export type QueueItem = {
+    kind: 'chunk';
+    chunk: StreamChunk;
+} | {
+    kind: 'turn-end';
+    reason: FinishReason;
+    usage?: TokenUsage;
+};
+/** Unbounded FIFO the consumer pushes into and the active turn pumps out. */
+export declare class TurnQueue implements AsyncIterable<QueueItem> {
+    private readonly items;
+    private resolve;
+    private closed;
+    push(item: QueueItem): void;
+    close(): void;
+    [Symbol.asyncIterator](): AsyncIterator<QueueItem>;
+    /** Whether the turn already ended; late pushes are dropped. */
+    get isClosed(): boolean;
+}
 /**
  * Structural view of the SDK usage this consumer forwards to the harness.
  *

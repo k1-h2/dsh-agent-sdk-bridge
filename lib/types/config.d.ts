@@ -15,6 +15,7 @@
  * @module dsh-agent-sdk-bridge/config
  */
 import z from '@deepseek-ai/schemastery';
+import type { CodeBuddyRegion } from './brand.ts';
 /**
  * The plugin configuration as authored in a profile patch.
  *
@@ -37,6 +38,8 @@ export interface Config {
     cnEnabled?: boolean;
     /** Whether the international edition is served; same semantics as {@link cnEnabled}. */
     intlEnabled?: boolean;
+    /** Whether CodeBuddy is served; same semantics as {@link cnEnabled}. */
+    codebuddyEnabled?: boolean;
     /**
      * Model ids the user switched OFF in the settings page.
      *
@@ -82,6 +85,16 @@ export interface Config {
      * Display name of the international provider group in the model picker.
      */
     intlDisplayName?: string;
+    /** Which CodeBuddy login region the sessions use. */
+    codebuddyRegion?: CodeBuddyRegion;
+    /** Display name of the CodeBuddy provider group in the model picker. */
+    codebuddyDisplayName?: string;
+    /** Model ids the user switched OFF for CodeBuddy. */
+    codebuddyDisabledModels?: string[];
+    /** Per-model context window for CodeBuddy, keyed by model id. */
+    codebuddyModelContextWindows?: Record<string, number>;
+    /** Extra model aliases for CodeBuddy. */
+    codebuddyModelAliases?: Record<string, string>;
     /**
      * Display name of the primary provider group in the model picker.
      */
@@ -159,12 +172,18 @@ export interface Config {
 export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     cnEnabled: z<boolean, boolean, "volatile-defined">;
     intlEnabled: z<boolean, boolean, "volatile-defined">;
+    codebuddyEnabled: z<boolean, boolean, "volatile-defined">;
     disabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     modelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     intlModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     intlDisplayName: z<string, string, "volatile-defined">;
+    codebuddyRegion: z<string, string, "volatile-defined">;
+    codebuddyDisplayName: z<string, string, "volatile-defined">;
+    codebuddyDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
@@ -178,12 +197,18 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
 }>>, Schemastery.ObjectT<NoInfer<{
     cnEnabled: z<boolean, boolean, "volatile-defined">;
     intlEnabled: z<boolean, boolean, "volatile-defined">;
+    codebuddyEnabled: z<boolean, boolean, "volatile-defined">;
     disabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     modelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
     intlModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     intlModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     intlDisplayName: z<string, string, "volatile-defined">;
+    codebuddyRegion: z<string, string, "volatile-defined">;
+    codebuddyDisplayName: z<string, string, "volatile-defined">;
+    codebuddyDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
@@ -199,6 +224,8 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
 export interface ResolvedConfig {
     cnEnabled: boolean;
     intlEnabled: boolean;
+    codebuddyEnabled: boolean;
+    codebuddyRegion: CodeBuddyRegion;
     displayName: string;
     maxSessions: number;
     modelCacheTtlMs: number;
@@ -215,6 +242,10 @@ export interface ResolvedConfig {
     intlDisabledModels: readonly string[];
     intlModelContextWindows: Readonly<Record<string, number>>;
     intlModelAliases: Readonly<Record<string, string>>;
+    codebuddyDisplayName: string;
+    codebuddyDisabledModels: readonly string[];
+    codebuddyModelContextWindows: Readonly<Record<string, number>>;
+    codebuddyModelAliases: Readonly<Record<string, string>>;
 }
 /**
  * A parsed config as it arrives at `apply()`: every field wrapped in the

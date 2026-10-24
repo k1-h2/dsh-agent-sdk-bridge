@@ -4,16 +4,20 @@
 
 ## 实现要点
 
-- **双版本**：品牌差异集中在 `src/brand.ts`（SDK 包、CLI 包、登录态目录、一键配置脚本），
-  其余代码按 brand 参数化。CN SDK 静态引入；国际版 SDK 按需 `import()`，没装时只有国际版页面
-  报错，插件照常加载。
-- **品牌隔离**：两版的 CLI 查找、模型目录缓存、会话池、额度缓存、模型开关全部按 brand 分开。
-  `QODERCLI_PATH` 若指向另一版本，对应版本会明确报错而不是借用那个 CLI 的账号。
+- **多 SDK**：品牌差异集中在 `src/brand.ts`（SDK 包、CLI 包、登录态目录、一键配置脚本、
+  登录区域），其余代码按 brand 参数化。CN Qoder SDK 静态引入；另两个 SDK 按需 `import()`，
+  没装时只有对应页面报错，插件照常加载。
+- **品牌隔离**：各 provider 的 CLI 查找、模型目录缓存、会话池、账户读取、模型开关全部按 brand
+  分开。`QODERCLI_PATH` 若指向另一 Qoder 版本，对应版本会明确报错而不是借用那个 CLI 的账号。
+- **CodeBuddy**：`src/codebuddy.ts` 自成一体会话（`unstable_v2_createSession` + 流式消息），
+  模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；登录走
+  `unstable_v2_authenticate`，`global`/`cn` 分别映射为 SDK 的 `external`/`internal`。
+  企业 `ioa`/`cloudhosted`/`selfhosted` 环境不暴露。SDK 自带 CLI，因此没有安装脚本。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
-- **版本开关**：`cnEnabled` / `intlEnabled` 是结构字段。宿主在 `loader/volatile-update` 时
-  重新注册或释放对应 adapter 路由，并按启用状态重建 picker 目录；浏览器半侧同步
-  `settings.section` 的注册与释放。关闭是「不存在」，不是「隐藏」。
+- **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` 是结构字段。宿主在
+  `loader/volatile-update` 时重新注册或释放对应 adapter 路由，并按启用状态重建 picker 目录；
+  浏览器半侧同步 `settings.section` 的注册与释放。关闭是「不存在」，不是「隐藏」。
 - **快照优先**：设置页把上次成功的模型列表与额度写入 `localStorage`（同源、按版本分开），
   首次渲染直接用快照，随后后台刷新并覆盖；读取失败时保留旧快照并标注。
 - **warm 会话**：每个宿主 session id 对应一个常驻内层 `query()` 子进程，对话延续与工具轮次都
