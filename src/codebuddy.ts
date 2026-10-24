@@ -48,6 +48,28 @@ const LOGOUT_TIMEOUT_MS = 20_000
 type SessionImpl = ReturnType<typeof import('@tencent-ai/agent-sdk').unstable_v2_createSession>
 
 const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
+/**
+ * The same namespace after the CLI normalises the server name.
+ *
+ * CodeBuddy rewrites every non-alphanumeric character in an MCP server name to
+ * `_`, so a server registered as `dsh-host` is exposed to the model as
+ * `mcp__dsh_host__<tool>`. Matching only the registered spelling rejected the
+ * host's own tools as "built-ins", which is exactly why the model fell back to
+ * `Bash`. The Qoder CLI keeps the hyphen, so both spellings are accepted.
+ */
+const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')}__`
+
+/** Whether a CLI tool name belongs to this plugin's MCP server. */
+function isHostTool(toolName: string): boolean {
+  return toolName.startsWith(MCP_TOOL_PREFIX) || toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)
+}
+
+/** The host-side tool name, with the MCP namespace removed. */
+function hostToolName(toolName: string): string {
+  if (toolName.startsWith(MCP_TOOL_PREFIX)) return toolName.slice(MCP_TOOL_PREFIX.length)
+  if (toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)) return toolName.slice(MCP_TOOL_PREFIX_SANITIZED.length)
+  return toolName
+}
 
 /** One model as the settings page and the adapter see it. */
 export interface CodeBuddyModel {
@@ -785,6 +807,7 @@ export class CodeBuddySession {
   private mcp: ReturnType<typeof import('@tencent-ai/agent-sdk').createSdkMcpServer> | null = null
   private readonly pairing = new ToolResultPairing()
   private readonly registered = new Map<string, string>()
+  private toolSchemas: readonly { name: string, description: string, parameters?: unknown }[] = []
   private queue: TurnQueue | null = null
   private disposed = false
   private abortPending = false
@@ -831,10 +854,24 @@ export class CodeBuddySession {
     if (options.cwd !== undefined) this.cwd = options.cwd
   }
 
-  /** Register any host tools whose schema this session's MCP server lacks. */
+  /**
+   * Remember the host tools and register them with this session's MCP server.
+   *
+   * Registration must happen before the CLI connects: the MCP SDK refuses a
+   * tool added afterwards. The first turn calls this before the session — and
+   * therefore its MCP server — exists, so the schemas are kept and replayed by
+   * {@link ensureStarted}. Returning early there left the model with no host
+   * tools at all, and it fell back to CodeBuddy's built-in `Bash`, which the
+   * host could only answer with "unknown tool".
+   */
   ensureTools(tools: readonly { name: string, description: string, parameters?: unknown }[]): void {
+    this.toolSchemas = tools
+    this.registerTools()
+  }
+
+  private registerTools(): void {
     if (this.mcp === null) return
-    for (const schema of tools) {
+    for (const schema of this.toolSchemas) {
       const hash = JSON.stringify(schema.parameters ?? {})
       if (this.registered.get(schema.name) === hash) continue
       const shape = jsonSchemaToShape((schema.parameters ?? {}) as Record<string, unknown>)
@@ -929,12 +966,17 @@ export class CodeBuddySession {
     if (this.session !== null) return this.session
     const sdk = await loadCodeBuddySdk()
     this.mcp ??= sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: [] })
+    // Host tools must exist in the MCP server before the CLI lists them.
+    this.registerTools()
     const session = sdk.unstable_v2_createSession({
       environment: codeBuddyEnvironment(this.region),
       sessionId: randomUUID(),
       model: this.model,
       mcpServers: { [MCP_SERVER_NAME]: this.mcp },
       canUseTool: this.canUseTool as CanUseTool,
+      // Only the host's MCP tools may run: the CLI's own Bash/Read/Edit have no
+      // host-side counterpart, and the permission gate denies them anyway.
+      tools: [],
       ...cliEnv(this.region),
       settingSources: [],
       includePartialMessages: true,
@@ -948,7 +990,7 @@ export class CodeBuddySession {
   }
 
   private canUseTool = (toolName: string, _input: Record<string, unknown>, options: { toolUseID?: string }) => {
-    if (toolName.startsWith(MCP_TOOL_PREFIX)) {
+    if (isHostTool(toolName)) {
       if (options.toolUseID !== undefined) this.pairing.announce(options.toolUseID)
       return Promise.resolve({ behavior: 'allow', ...options.toolUseID === undefined ? {} : { toolUseID: options.toolUseID } })
     }
@@ -985,13 +1027,20 @@ export class CodeBuddySession {
       if (event.type === 'content_block_start') {
         const block = event.content_block as { type?: string, id?: string, name?: string, input?: unknown }
         if (block?.type === 'tool_use') {
+          // A built-in CLI tool (Bash, Read, ToolSearch…) has no host
+          // counterpart; forwarding it made the host answer "unknown tool" and
+          // stop the turn. `tools: []` stops them being offered at all, and
+          // this guard covers anything the CLI still emits. The permission
+          // gate denies the call, so the inner model sees the denial and can
+          // retry with a host tool.
+          if (!isHostTool(block.name ?? '')) return
           const callId = `cb-${this.callNonce}-${++this.callCounter}`
           if (typeof block.id === 'string' && block.id.length > 0) this.pairing.mapHostCall(callId, block.id)
           const chunkIndex = this.blockIndex++
           const initial = block.input !== undefined && block.input !== null && Object.keys(block.input as object).length > 0
             ? JSON.stringify(block.input)
             : ''
-          this.openTool = { chunkIndex, callId, name: (block.name ?? '').replace(MCP_TOOL_PREFIX, ''), arguments: initial }
+          this.openTool = { chunkIndex, callId, name: hostToolName(block.name ?? ''), arguments: initial }
           this.countOutput(this.openTool.name)
           this.countOutput(initial)
           this.emit({ type: 'block-start', index: chunkIndex, blockType: 'tool-call' })
@@ -1229,6 +1278,8 @@ export async function codeBuddyColdStream(
     sessionId: randomUUID(),
     ...model === undefined ? {} : { model },
     ...cliEnv(region),
+    // Titles and compaction must never run a tool.
+    tools: [],
     settingSources: [],
     persistSession: false,
   })

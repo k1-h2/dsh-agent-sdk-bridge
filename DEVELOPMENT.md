@@ -26,6 +26,14 @@
   切区域时页面先渲染本地快照，再用 `fresh=1` 在后台校验。
   浏览器由 CLI 的登录流程自己打开；`onAuthUrl` 只记录 URL 供卡片显示「手动打开登录页」，
   宿主不再调用系统打开方式，否则每次登录会出现两个相同标签页。
+- **CodeBuddy 的宿主工具**：宿主工具通过进程内 MCP server 挂入，`CodeBuddySession` 必须
+  在 CLI 启动前完成注册——`ensureTools()` 会保存 schema，`ensureStarted()` 创建 MCP server
+  后立即重放，然后才 `createSession`（MCP SDK 拒绝连接后再注册）。早返回会让首个 turn
+  根本没有宿主工具，模型退回调用 CLI 内置的 `Bash`，宿主只能报 unknown tool。
+  会话同时传 `tools: []` 禁用 CLI 内置工具（`--tools ""`），MCP 工具不受影响；`handle()`
+  仍会丢弃任何非宿主前缀的 tool_use，防止模型臆造工具名。CodeBuddy 会把 MCP server 名里的
+  非字母数字字符规范成 `_`（`dsh-host` → `mcp__dsh_host__<tool>`），Qoder CLI 保留连字符，
+  因此 `isHostTool()` / `hostToolName()` 同时接受两种拼写。
 - **CodeBuddy 模型选择按区域**：`codebuddyGlobalDisabledModels` /
   `codebuddyCnDisabledModels` 与 `codebuddyGlobalModelContextWindows` /
   `codebuddyCnModelContextWindows` 是四个独立字段，`CodeBuddyAdapter` 按 region 读取，

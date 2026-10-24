@@ -194,6 +194,7 @@ export declare class CodeBuddySession {
     private mcp;
     private readonly pairing;
     private readonly registered;
+    private toolSchemas;
     private queue;
     private disposed;
     private abortPending;
@@ -230,12 +231,22 @@ export declare class CodeBuddySession {
         system?: string;
         cwd?: string;
     }): void;
-    /** Register any host tools whose schema this session's MCP server lacks. */
+    /**
+     * Remember the host tools and register them with this session's MCP server.
+     *
+     * Registration must happen before the CLI connects: the MCP SDK refuses a
+     * tool added afterwards. The first turn calls this before the session — and
+     * therefore its MCP server — exists, so the schemas are kept and replayed by
+     * {@link ensureStarted}. Returning early there left the model with no host
+     * tools at all, and it fell back to CodeBuddy's built-in `Bash`, which the
+     * host could only answer with "unknown tool".
+     */
     ensureTools(tools: readonly {
         name: string;
         description: string;
         parameters?: unknown;
     }[]): void;
+    private registerTools;
     /** Hand the host's tool results to parked or buffered handlers. */
     deliverToolResults(tail: readonly {
         role: string;
