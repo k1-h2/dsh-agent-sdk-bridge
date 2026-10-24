@@ -14,6 +14,7 @@
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { RawLanguageModel } from '@tencent-ai/agent-sdk';
 import type { CodeBuddyRegion } from './brand.ts';
+import { CodeBuddyStateStore } from './codebuddy-state.ts';
 import type { Live } from './live.ts';
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
 export declare const CODEBUDDY_DEFAULT_CONTEXT_WINDOW = 200000;
@@ -40,6 +41,9 @@ export interface CodeBuddyModel {
 }
 /** One signed-in CodeBuddy account. */
 export interface CodeBuddyAccount {
+    uid?: string;
+    userId?: string;
+    userName?: string;
     email?: string;
     organization?: string;
     subscriptionType?: string;
@@ -70,6 +74,8 @@ export interface CodeBuddyUsageSnapshot {
     quotaError?: string;
     error?: string;
 }
+/** Persisted per-region login and account snapshots. */
+export declare const codeBuddyState: CodeBuddyStateStore;
 /** Login progress for one region. */
 export interface CodeBuddyAuthStatus {
     running: boolean;
@@ -83,6 +89,8 @@ export interface CodeBuddyAuthStatus {
         userName: string;
         userNickname: string;
     };
+    /** Whether a usable credential is available for this region. */
+    signedIn?: boolean;
     error?: string;
 }
 /** Turn one raw catalog entry into the model row this plugin uses. */
@@ -102,10 +110,10 @@ export declare class CodeBuddyCatalog {
     private readonly inflight;
     private readonly failures;
     constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>);
-    /** Models for the current region; a failed refresh keeps the last good list. */
-    models(): Promise<readonly CodeBuddyModel[]>;
+    /** Models for one region; a failed refresh keeps the last good list. */
+    models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]>;
     /** Why the last refresh failed, or undefined when it succeeded. */
-    error(): string | undefined;
+    error(requested?: CodeBuddyRegion): string | undefined;
     invalidate(region?: CodeBuddyRegion): void;
     private fetch;
 }
@@ -114,11 +122,18 @@ export declare class CodeBuddyAccountReader {
     private readonly region;
     private readonly ttlMs;
     private readonly timeoutMs;
-    private cached;
-    private inflight;
+    private readonly cached;
+    private readonly inflight;
     constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>);
-    read(fresh?: boolean): Promise<CodeBuddyUsageSnapshot>;
-    invalidate(): void;
+    /**
+     * The account for one region.
+     *
+     * A non-fresh read answers from the persisted snapshot first, so switching
+     * the region selector paints immediately; the page follows with `fresh=1`
+     * to replace it with a live CLI reading.
+     */
+    read(fresh?: boolean, requested?: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot>;
+    invalidate(region?: CodeBuddyRegion): void;
     private fetch;
 }
 /** Turn a raw SDK failure into a sentence the settings page can act on. */
@@ -161,6 +176,8 @@ export declare class CodeBuddyAuth {
         ok: false;
         error: string;
     }>;
+    /** False once this run was replaced or cancelled by logout. */
+    private current;
     private login;
 }
 /**

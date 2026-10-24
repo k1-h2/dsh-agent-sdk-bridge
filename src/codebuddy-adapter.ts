@@ -36,13 +36,14 @@ export interface CodeBuddyAdapterOptions {
   defaultReasoningEffort?: Live<string | undefined>
   displayName?: Live<string>
   region?: Live<CodeBuddyRegion>
-  disabledModels?: Live<readonly string[]>
-  modelContextWindows?: Live<Readonly<Record<string, number>>>
+  /** Per-region deny-lists; the page edits each region's list separately. */
+  disabledModels?: (region: CodeBuddyRegion) => readonly string[]
+  /** Per-region context-window overrides, keyed by model id. */
+  modelContextWindows?: (region: CodeBuddyRegion) => Readonly<Record<string, number>>
   modelAliases?: Live<Readonly<Record<string, string>>>
 }
 
 const NO_MODELS: readonly string[] = []
-const NO_WINDOWS: Readonly<Record<string, number>> = {}
 const NO_ALIASES: Readonly<Record<string, string>> = {}
 
 /** Map a harness-side id onto a CodeBuddy model value. */
@@ -73,7 +74,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
   private readonly catalog: CodeBuddyCatalog
   private readonly accounts: CodeBuddyAccountReader
   private readonly auth = new CodeBuddyAuth()
-  private disabledCache: { source: readonly string[], set: ReadonlySet<string> } | undefined
+  private readonly disabledCache = new Map<CodeBuddyRegion, { key: string, set: ReadonlySet<string> }>()
 
   constructor(options: CodeBuddyAdapterOptions = {}) {
     super()
@@ -98,16 +99,15 @@ export class CodeBuddyAdapter extends LlmAdapter {
     return readLive(this.options.region ?? (() => 'global'), 'global')
   }
 
-  private get disabled(): ReadonlySet<string> {
-    const source = readLive(this.options.disabledModels, NO_MODELS)
-    if (this.disabledCache !== undefined && this.disabledCache.source === source) return this.disabledCache.set
+  private disabledFor(region: CodeBuddyRegion): ReadonlySet<string> {
+    const source = this.options.disabledModels?.(region) ?? NO_MODELS
+    // The live config returns a fresh array per read, so compare by content.
+    const key = source.join('\u0000')
+    const cached = this.disabledCache.get(region)
+    if (cached?.key === key) return cached.set
     const set = new Set(source)
-    this.disabledCache = { source, set }
+    this.disabledCache.set(region, { key, set })
     return set
-  }
-
-  private get windows(): Readonly<Record<string, number>> {
-    return readLive(this.options.modelContextWindows, NO_WINDOWS)
   }
 
   private get aliases(): Readonly<Record<string, string>> {
@@ -123,26 +123,33 @@ export class CodeBuddyAdapter extends LlmAdapter {
   }
 
   /** The live catalog, unfiltered (the page must show switched-off models). */
-  async describeCatalog(): Promise<readonly CodeBuddyModel[]> {
-    return this.catalog.models()
+  async describeCatalog(region: CodeBuddyRegion = this.region): Promise<readonly CodeBuddyModel[]> {
+    if (!this.isSignedIn(region)) return []
+    return this.catalog.models(region)
+  }
+
+  /** Whether the selected (or given) region has a stored login. */
+  isSignedIn(region: CodeBuddyRegion = this.region): boolean {
+    return this.auth.status(region).signedIn === true
   }
 
   /** Why the last catalog read failed, for the page's guidance. */
-  catalogError(): string | undefined {
-    return this.catalog.error()
+  catalogError(region: CodeBuddyRegion = this.region): string | undefined {
+    if (!this.isSignedIn(region)) return '请先登录 CodeBuddy，登录后才会读取并显示模型目录。'
+    return this.catalog.error(region)
   }
 
-  invalidateCatalog(): void {
-    this.catalog.invalidate()
+  invalidateCatalog(region?: CodeBuddyRegion): void {
+    this.catalog.invalidate(region)
   }
 
   /** The signed-in account, or the reason it could not be read. */
-  async usageInfo(fresh = false): Promise<CodeBuddyUsageSnapshot> {
-    return this.accounts.read(fresh)
+  async usageInfo(fresh = false, region?: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot> {
+    return this.accounts.read(fresh, region)
   }
 
-  invalidateUsage(): void {
-    this.accounts.invalidate()
+  invalidateUsage(region?: CodeBuddyRegion): void {
+    this.accounts.invalidate(region)
   }
 
   /** Login progress for one region; the page polls this. */
@@ -153,31 +160,34 @@ export class CodeBuddyAdapter extends LlmAdapter {
   startLogin(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['start']> {
     return this.auth.start(region, ok => {
       if (!ok) return
-      this.invalidateCatalog()
-      this.invalidateUsage()
+      this.sessions.closeAll()
+      this.invalidateCatalog(region)
+      this.invalidateUsage(region)
     })
   }
 
   async logout(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['logout']> {
     const result = await this.auth.logout(region)
-    if (result.ok) {
-      this.invalidateCatalog()
-      this.invalidateUsage()
-    }
+    this.sessions.closeAll()
+    this.invalidateCatalog(region)
+    this.invalidateUsage(region)
     return result
   }
 
-  isModelDisabled(id: string): boolean {
-    return this.disabled.has(id)
+  isModelDisabled(id: string, region: CodeBuddyRegion = this.region): boolean {
+    return this.disabledFor(region).has(id)
   }
 
-  contextWindowFor(id: string): number | undefined {
-    return this.windows[id]
+  contextWindowFor(id: string, region: CodeBuddyRegion = this.region): number | undefined {
+    return this.options.modelContextWindows?.(region)[id]
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    const models = await this.catalog.models()
-    return models.filter(model => !this.disabled.has(model.id)).map(model => modelInfo(provider, model))
+    const region = this.region
+    if (!this.isSignedIn(region)) return []
+    const models = await this.catalog.models(region)
+    const disabled = this.disabledFor(region)
+    return models.filter(model => !disabled.has(model.id)).map(model => modelInfo(provider, model))
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -223,8 +233,12 @@ export class CodeBuddyAdapter extends LlmAdapter {
   }
 
   private async *dispatch(options: GenerateOptions): AsyncGenerator<StreamChunk> {
-    const model = resolveCodeBuddyModelId(options.model, this.aliases)
     const region = this.region
+    if (!this.isSignedIn(region)) {
+      const label = region === 'cn' ? 'CodeBuddy 国内版' : 'CodeBuddy 国际版'
+      throw new Error(`${label}尚未登录，请先在设置 → CodeBuddy 中登录。`)
+    }
+    const model = resolveCodeBuddyModelId(options.model, this.aliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
       const prompt = feedToText(renderInitialFeed(options.system, options.messages))
         + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'

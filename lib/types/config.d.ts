@@ -89,11 +89,15 @@ export interface Config {
     codebuddyRegion?: CodeBuddyRegion;
     /** Display name of the CodeBuddy provider group in the model picker. */
     codebuddyDisplayName?: string;
-    /** Model ids the user switched OFF for CodeBuddy. */
-    codebuddyDisabledModels?: string[];
-    /** Per-model context window for CodeBuddy, keyed by model id. */
-    codebuddyModelContextWindows?: Record<string, number>;
-    /** Extra model aliases for CodeBuddy. */
+    /** Model ids the user switched OFF for the international region. */
+    codebuddyGlobalDisabledModels?: string[];
+    /** Model ids the user switched OFF for the mainland region. */
+    codebuddyCnDisabledModels?: string[];
+    /** Per-model context window for the international region, keyed by model id. */
+    codebuddyGlobalModelContextWindows?: Record<string, number>;
+    /** Per-model context window for the mainland region, keyed by model id. */
+    codebuddyCnModelContextWindows?: Record<string, number>;
+    /** Extra model aliases for CodeBuddy, shared by both regions. */
     codebuddyModelAliases?: Record<string, string>;
     /**
      * Display name of the primary provider group in the model picker.
@@ -181,8 +185,10 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     intlDisplayName: z<string, string, "volatile-defined">;
     codebuddyRegion: z<string, string, "volatile-defined">;
     codebuddyDisplayName: z<string, string, "volatile-defined">;
-    codebuddyDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
-    codebuddyModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyGlobalDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyCnDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
@@ -206,8 +212,10 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     intlDisplayName: z<string, string, "volatile-defined">;
     codebuddyRegion: z<string, string, "volatile-defined">;
     codebuddyDisplayName: z<string, string, "volatile-defined">;
-    codebuddyDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
-    codebuddyModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyGlobalDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyCnDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
@@ -243,8 +251,10 @@ export interface ResolvedConfig {
     intlModelContextWindows: Readonly<Record<string, number>>;
     intlModelAliases: Readonly<Record<string, string>>;
     codebuddyDisplayName: string;
-    codebuddyDisabledModels: readonly string[];
-    codebuddyModelContextWindows: Readonly<Record<string, number>>;
+    codebuddyGlobalDisabledModels: readonly string[];
+    codebuddyCnDisabledModels: readonly string[];
+    codebuddyGlobalModelContextWindows: Readonly<Record<string, number>>;
+    codebuddyCnModelContextWindows: Readonly<Record<string, number>>;
     codebuddyModelAliases: Readonly<Record<string, string>>;
 }
 /**

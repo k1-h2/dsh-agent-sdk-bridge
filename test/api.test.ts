@@ -43,12 +43,14 @@ const ADAPTERS = { cn: adapter('cn'), global: adapter('global'), codebuddy: code
 /** CodeBuddy's catalog uses its own row shape, so it gets its own stub. */
 function codeBuddyAdapter(): CodeBuddyAdapter {
   return {
-    describeCatalog: async () => [{
-      id: 'cb-model', name: 'CB Model', contextWindows: [200_000, 1_000_000],
+    describeCatalog: async (region?: string) => [{
+      id: region === 'cn' ? 'cb-cn-model' : 'cb-model',
+      name: 'CB Model', contextWindows: [200_000, 1_000_000],
       defaultContextWindow: 200_000, vision: true, reasoningEfforts: ['low', 'high'],
     }],
     contextWindowFor: () => undefined,
     isModelDisabled: () => false,
+    isSignedIn: () => true,
     catalogError: () => undefined,
     usageInfo: async () => ({ at: 1, account: { email: 'cb@example.com' } }),
     invalidateCatalog: () => {},
@@ -109,11 +111,45 @@ describe('settings API brand routing', () => {
     const models = response()
     await handleApi(request(`${API_PREFIX}/models?brand=codebuddy`), models.res, ADAPTERS)
     expect(models.status()).toBe(200)
+    expect(models.body().signedIn).toBe(true)
     expect(models.body().models[0]).toMatchObject({ id: 'cb-model', vision: true, reasoning: true })
 
     const account = response()
     await handleApi(request(`${API_PREFIX}/usage?brand=codebuddy`), account.res, ADAPTERS)
     expect(account.body()).toMatchObject({ brand: 'codebuddy', account: { email: 'cb@example.com' } })
+
+    const region = response()
+    await handleApi(request(`${API_PREFIX}/usage?brand=codebuddy&region=cn`), region.res, ADAPTERS)
+    expect(region.body()).toMatchObject({ brand: 'codebuddy', account: { email: 'cb@example.com' } })
+  })
+
+  it('passes the requested region through to the CodeBuddy catalog', async () => {
+    const cn = response()
+    await handleApi(request(`${API_PREFIX}/models?brand=codebuddy&region=cn`), cn.res, ADAPTERS)
+    expect(cn.status()).toBe(200)
+    // The page refuses a table whose echoed region is not the one it asked for.
+    expect(cn.body().region).toBe('cn')
+    expect(cn.body().models[0].id).toBe('cb-cn-model')
+
+    const bad = response()
+    await handleApi(request(`${API_PREFIX}/models?brand=codebuddy&region=ioa`), bad.res, ADAPTERS)
+    expect(bad.status()).toBe(400)
+  })
+
+  it('does not read a CodeBuddy catalog while signed out', async () => {
+    const signedOut = { ...(ADAPTERS.codebuddy as unknown as Record<string, unknown>) }
+    signedOut.isSignedIn = () => false
+    signedOut.catalogError = () => '请先登录 CodeBuddy'
+    let catalogReads = 0
+    signedOut.describeCatalog = async () => { catalogReads++; return [] }
+    const r = response()
+    await handleApi(request(`${API_PREFIX}/models?brand=codebuddy`), r.res, {
+      ...ADAPTERS,
+      codebuddy: signedOut as unknown as CodeBuddyAdapter,
+    })
+    expect(r.status()).toBe(200)
+    expect(r.body()).toMatchObject({ brand: 'codebuddy', signedIn: false, models: [] })
+    expect(catalogReads).toBe(0)
   })
 
   it('starts a CodeBuddy login for the requested region and refuses a bad one', async () => {

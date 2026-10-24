@@ -2,7 +2,7 @@
   "name": "dsh-agent-sdk-bridge",
   "displayName": "Agent SDK Bridge",
   "description": "DeepSeek Harness LLM adapter bridge for Qoder CN, Qoder International and Tencent CodeBuddy subscriptions. It reuses each provider's own SDK and CLI login, shows the Qoder account quota, exposes per-provider settings pages, and supports CodeBuddy's international and mainland login regions.",
-  "version": "1.2.0",
+  "version": "1.0.0",
   "type": "module",
   "license": "MIT",
   "author": "k1-h2",
@@ -54,6 +54,10 @@
   ],
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "dsh": {
     "bundle": {

@@ -3,14 +3,15 @@
 把 **Qoder CN**、**Qoder 国际版**与 **CodeBuddy** 订阅接入
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 LLM 适配器插件。
 
-> 本仓库是 Qoder 插件的后续维护地址；除 Qoder 外，同仓库还接入了腾讯 CodeBuddy。
+> 本仓库是 [dsh-qoder-link](https://github.com/k1-h2/dsh-qoder-link) 插件的后续维护地址；除 Qoder 外，同仓库还接入了腾讯 CodeBuddy。
 
 - **官方 SDK**：Qoder 用 [`@qodercn-ai/qodercn-agent-sdk`](https://www.npmjs.com/package/@qodercn-ai/qodercn-agent-sdk)
   与 [`@qoder-ai/qoder-agent-sdk`](https://www.npmjs.com/package/@qoder-ai/qoder-agent-sdk)；
   CodeBuddy 用 [`@tencent-ai/agent-sdk`](https://www.npmjs.com/package/@tencent-ai/agent-sdk)。
 - **零凭据**：复用本机 CLI 登录态，不需要 API key。
 - **额度可见**：Qoder 显示套餐、已用百分比、剩余 credits、加量包与到期时间；CodeBuddy 通过其
-  计费接口显示积分余额与各积分包（与官方账号页同源）。
+  计费接口显示积分余额与各积分包（与官方账号页同源），卡片上的「用量明细」可直接打开当前区域
+  官网的用量页。
 - **三套设置页**：Qoder CN / Qoder 国际版 / CodeBuddy，各自独立的模型开关、上下文窗口与登录面板。
 
 ## 为什么需要它
@@ -26,8 +27,8 @@ CodeBuddy 的官方 SDK 则自带 CLI，但同样需要按账号登录。本插�
 
 ### 1. 装插件
 
-**插件 → 添加插件**，填 `github:k1-h2/dsh-agent-sdk-bridge` 并安装；也可用本地目录。
-`dsh-agent-sdk-bridge` 尚未发布到 npm，请使用上面的 GitHub 地址（或本地目录）安装。
+**插件 → 添加插件**，填 `dsh-agent-sdk-bridge` 并安装（npm）；也可用
+`github:k1-h2/dsh-agent-sdk-bridge` 或本地目录。
 
 若提示**「需要允许安装脚本」**（SDK 下载自己的 worker runtime），点「允许这些脚本并重试」即可；
 不授权也能用，SDK 会回退到 PATH 上的系统 CLI。装完按提示**重启 DSH**。
@@ -44,7 +45,10 @@ CodeBuddy 的官方 SDK 则自带 CLI，但同样需要按账号登录。本插�
 
 **设置 → Qoder CN / Qoder 国际版** → 页面底部「一键配置」：缺 CLI 就装，未登录就拉起浏览器授权，
 输出实时显示。**设置 → CodeBuddy** → 顶部选择「国际版（codebuddy.ai）」或「国内版
-（copilot.tencent.com）」，点「登录」后在浏览器完成授权。企业域名 / IOA 登录不在支持范围内。
+（copilot.tencent.com）」，点「登录」后在浏览器完成授权。两个区域的登录凭据分别保存在本机
+（`~/.dsh/agent-sdk-bridge/codebuddy-state.json`，权限 0600），切换区域会立即恢复对应账号的
+账号、额度与模型表，各自启用哪些模型和上下文窗口也按区域独立保存；未登录时不会读取或显示
+模型目录。浏览器由 CodeBuddy CLI 打开，插件不再重复打开。企业域名 / IOA 登录不在支持范围内。
 
 也可以手动执行 Qoder 的两步：
 

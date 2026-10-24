@@ -108,8 +108,10 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     intlDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     codebuddyRegion: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     codebuddyDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
-    codebuddyDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
-    codebuddyModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyGlobalDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyCnDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyGlobalModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyCnModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
@@ -133,8 +135,10 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     intlDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     codebuddyRegion: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     codebuddyDisplayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
-    codebuddyDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
-    codebuddyModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyGlobalDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyCnDisabledModels: import("@deepseek-ai/schemastery").default<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    codebuddyGlobalModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    codebuddyCnModelContextWindows: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;

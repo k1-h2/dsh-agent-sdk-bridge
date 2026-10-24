@@ -214,5 +214,22 @@ describe('live config', () => {
     expect(live.intlEnabled()).toBe(true)
     expect(live.codebuddyEnabled()).toBe(true)
     expect(live.codebuddyRegion()).toBe('global')
+    expect(live.codebuddyGlobalDisabledModels()).toEqual([])
+    expect(live.codebuddyCnDisabledModels()).toEqual([])
+    expect(live.codebuddyGlobalModelContextWindows()).toEqual({})
+    expect(live.codebuddyCnModelContextWindows()).toEqual({})
+  })
+
+  it('keeps CodeBuddy model choices per login region', () => {
+    const live = liveConfig(parse({
+      codebuddyGlobalDisabledModels: ['global-off'],
+      codebuddyCnDisabledModels: ['cn-off'],
+      codebuddyGlobalModelContextWindows: { 'global-model': 1_000_000 },
+      codebuddyCnModelContextWindows: { 'cn-model': 200_000 },
+    }))
+    expect(live.codebuddyGlobalDisabledModels()).toEqual(['global-off'])
+    expect(live.codebuddyCnDisabledModels()).toEqual(['cn-off'])
+    expect(live.codebuddyGlobalModelContextWindows()).toEqual({ 'global-model': 1_000_000 })
+    expect(live.codebuddyCnModelContextWindows()).toEqual({ 'cn-model': 200_000 })
   })
 })

@@ -27,8 +27,10 @@ export interface CodeBuddyAdapterOptions {
     defaultReasoningEffort?: Live<string | undefined>;
     displayName?: Live<string>;
     region?: Live<CodeBuddyRegion>;
-    disabledModels?: Live<readonly string[]>;
-    modelContextWindows?: Live<Readonly<Record<string, number>>>;
+    /** Per-region deny-lists; the page edits each region's list separately. */
+    disabledModels?: (region: CodeBuddyRegion) => readonly string[];
+    /** Per-region context-window overrides, keyed by model id. */
+    modelContextWindows?: (region: CodeBuddyRegion) => Readonly<Record<string, number>>;
     modelAliases?: Live<Readonly<Record<string, string>>>;
 }
 /** Map a harness-side id onto a CodeBuddy model value. */
@@ -40,28 +42,29 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     private readonly catalog;
     private readonly accounts;
     private readonly auth;
-    private disabledCache;
+    private readonly disabledCache;
     constructor(options?: CodeBuddyAdapterOptions);
     private get region();
-    private get disabled();
-    private get windows();
+    private disabledFor;
     private get aliases();
     private get displayName();
     providerInfo(provider: string): LlmProviderInfo;
     /** The live catalog, unfiltered (the page must show switched-off models). */
-    describeCatalog(): Promise<readonly CodeBuddyModel[]>;
+    describeCatalog(region?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]>;
+    /** Whether the selected (or given) region has a stored login. */
+    isSignedIn(region?: CodeBuddyRegion): boolean;
     /** Why the last catalog read failed, for the page's guidance. */
-    catalogError(): string | undefined;
-    invalidateCatalog(): void;
+    catalogError(region?: CodeBuddyRegion): string | undefined;
+    invalidateCatalog(region?: CodeBuddyRegion): void;
     /** The signed-in account, or the reason it could not be read. */
-    usageInfo(fresh?: boolean): Promise<CodeBuddyUsageSnapshot>;
-    invalidateUsage(): void;
+    usageInfo(fresh?: boolean, region?: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot>;
+    invalidateUsage(region?: CodeBuddyRegion): void;
     /** Login progress for one region; the page polls this. */
     authStatus(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['status']>;
     startLogin(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['start']>;
     logout(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['logout']>;
-    isModelDisabled(id: string): boolean;
-    contextWindowFor(id: string): number | undefined;
+    isModelDisabled(id: string, region?: CodeBuddyRegion): boolean;
+    contextWindowFor(id: string, region?: CodeBuddyRegion): number | undefined;
     listModels(provider: string): Promise<readonly LlmModelInfo[]>;
     resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
     prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;

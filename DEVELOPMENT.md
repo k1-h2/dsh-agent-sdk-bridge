@@ -13,9 +13,37 @@
   模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；登录走
   `unstable_v2_authenticate`，`global`/`cn` 分别映射为 SDK 的 `external`/`internal`。
   企业 `ioa`/`cloudhosted`/`selfhosted` 环境不暴露。SDK 自带 CLI，因此没有安装脚本。
+  登录点击会先 `unstable_v2_logout` 清掉该区域缓存的 token：SDK 的 `authenticate()` 发现
+  旧 token 时会静默返回、不回调 `onAuthUrl`，导致「切区域后点登录不弹浏览器」；清掉后
+  必定走完整浏览器授权。登录成功会关闭该区域所有热会话，避免继续复用旧凭据。
+  登录结果按区域写入 `~/.dsh/agent-sdk-bridge/codebuddy-state.json`（`src/codebuddy-state.ts`，
+  含账号、额度快照与 bearer token，权限 0600）。之后创建会话、读账号都用
+  `CODEBUDDY_AUTH_TOKEN` 环境变量把该区域的 token 注入 CLI，因此切区域和重启后恢复登录都
+  不需要再走浏览器；登出或配额 401 会清掉该区域的 token。无效 token 会让 CLI 以
+  `anonymous` 账号应答，`isUnauthenticatedAccount()` 将其判为未登录。未登录时
+  `listModels()` / `describeCatalog()` 直接返回空，`/models` 也不读取目录；账号读取与
+  会话创建都要求该区域有已保存的 token，绝不借用 CLI 里可能属于另一区域的单份登录。
+  切区域时页面先渲染本地快照，再用 `fresh=1` 在后台校验。
+  浏览器由 CLI 的登录流程自己打开；`onAuthUrl` 只记录 URL 供卡片显示「手动打开登录页」，
+  宿主不再调用系统打开方式，否则每次登录会出现两个相同标签页。
+- **CodeBuddy 模型选择按区域**：`codebuddyGlobalDisabledModels` /
+  `codebuddyCnDisabledModels` 与 `codebuddyGlobalModelContextWindows` /
+  `codebuddyCnModelContextWindows` 是四个独立字段，`CodeBuddyAdapter` 按 region 读取，
+  模型页也按当前区域写入对应字段。`/models?brand=codebuddy&region=cn|global` 显式选择区域，
+  页面切换下拉框时先画该区域的本地缓存表，再拉取；这样不依赖 `codebuddyRegion` 的写入提交
+  时序，也不会把另一区域的目录写进当前区域。
+  CLI 把「当前产品环境」记在自己的用户目录里，initialize 时才切换，而模型提供方在切换前
+  就已经选好了目录；两个区域共用 `~/.codebuddy` 时，换区后的读取会拿到上一个环境的列表，
+  再被缓存 5 分钟——模型列表、以及由它派生的开关状态都会串到另一个区域。
+  现在每个区域有独立的 `CODEBUDDY_CONFIG_DIR`
+  （`~/.dsh/agent-sdk-bridge/codebuddy-cli/global|cn`，见 `codeBuddyCliDir()`），环境因此
+  固定，进程启动后第一次读取就是本区域的目录。登录仍写用户自己的 CLI 目录，会话通过
+  `CODEBUDDY_AUTH_TOKEN` + 该目录启动。页面在切区域时用 `fresh=1` 绕开宿主缓存，并校验
+  `/models` 回显的 `region`。设置页的所有分支都渲染相同的 h2 / intro / 卡片前缀，避免切区时
+  卡片因子节点下标变化被重建、把下拉框弹回配置里的旧区域。
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
-  token 只缓存在内存，额度读取用一次静默 `authenticate` 取已有登录 token，不会拉起浏览器。
+  额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
 - **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` 是结构字段。宿主在

@@ -248,8 +248,12 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       defaultReasoningEffort: live.defaultReasoningEffort,
       displayName: live.codebuddyDisplayName,
       region: live.codebuddyRegion,
-      disabledModels: live.codebuddyDisabledModels,
-      modelContextWindows: live.codebuddyModelContextWindows,
+      disabledModels: region => region === 'cn'
+        ? live.codebuddyCnDisabledModels()
+        : live.codebuddyGlobalDisabledModels(),
+      modelContextWindows: region => region === 'cn'
+        ? live.codebuddyCnModelContextWindows()
+        : live.codebuddyGlobalModelContextWindows(),
       modelAliases: live.codebuddyModelAliases,
     }),
   }

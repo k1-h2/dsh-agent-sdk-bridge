@@ -99,11 +99,15 @@ export interface Config {
   codebuddyRegion?: CodeBuddyRegion
   /** Display name of the CodeBuddy provider group in the model picker. */
   codebuddyDisplayName?: string
-  /** Model ids the user switched OFF for CodeBuddy. */
-  codebuddyDisabledModels?: string[]
-  /** Per-model context window for CodeBuddy, keyed by model id. */
-  codebuddyModelContextWindows?: Record<string, number>
-  /** Extra model aliases for CodeBuddy. */
+  /** Model ids the user switched OFF for the international region. */
+  codebuddyGlobalDisabledModels?: string[]
+  /** Model ids the user switched OFF for the mainland region. */
+  codebuddyCnDisabledModels?: string[]
+  /** Per-model context window for the international region, keyed by model id. */
+  codebuddyGlobalModelContextWindows?: Record<string, number>
+  /** Per-model context window for the mainland region, keyed by model id. */
+  codebuddyCnModelContextWindows?: Record<string, number>
+  /** Extra model aliases for CodeBuddy, shared by both regions. */
   codebuddyModelAliases?: Record<string, string>
 
   // ── Advanced: sensible defaults, rarely changed ─────────────────────────
@@ -204,8 +208,10 @@ export const Config = z.object({
   // ── CodeBuddy：一个接入，两种登录区域 ──────────────────────────────────
   codebuddyRegion: z.string().default('global').description('CodeBuddy 登录区域：global（国际版，codebuddy.ai）或 cn（国内版，copilot.tencent.com）。切换后使用对应区域的登录态。').volatile(),
   codebuddyDisplayName: z.string().default('CodeBuddy').description('模型选择器里 CodeBuddy 分组的名称。').volatile(),
-  codebuddyDisabledModels: z.array(z.string()).default([]).description('CodeBuddy 已关闭的模型 ID 列表。').volatile(),
-  codebuddyModelContextWindows: z.dict(z.number()).default({}).description('CodeBuddy 按模型指定的上下文窗口（token 数）。').volatile(),
+  codebuddyGlobalDisabledModels: z.array(z.string()).default([]).description('CodeBuddy 国际版（codebuddy.ai）已关闭的模型 ID 列表。').volatile(),
+  codebuddyCnDisabledModels: z.array(z.string()).default([]).description('CodeBuddy 国内版（copilot.tencent.com）已关闭的模型 ID 列表。').volatile(),
+  codebuddyGlobalModelContextWindows: z.dict(z.number()).default({}).description('CodeBuddy 国际版按模型指定的上下文窗口（token 数）。').volatile(),
+  codebuddyCnModelContextWindows: z.dict(z.number()).default({}).description('CodeBuddy 国内版按模型指定的上下文窗口（token 数）。').volatile(),
   codebuddyModelAliases: z.dict(z.string()).default({}).description('CodeBuddy 额外的模型别名映射：DSH 侧名称 → CodeBuddy 模型 ID。').volatile(),
 
   // ── 高级：一般无需改动 ─────────────────────────────────────────────────
@@ -244,8 +250,10 @@ export interface ResolvedConfig {
   intlModelContextWindows: Readonly<Record<string, number>>
   intlModelAliases: Readonly<Record<string, string>>
   codebuddyDisplayName: string
-  codebuddyDisabledModels: readonly string[]
-  codebuddyModelContextWindows: Readonly<Record<string, number>>
+  codebuddyGlobalDisabledModels: readonly string[]
+  codebuddyCnDisabledModels: readonly string[]
+  codebuddyGlobalModelContextWindows: Readonly<Record<string, number>>
+  codebuddyCnModelContextWindows: Readonly<Record<string, number>>
   codebuddyModelAliases: Readonly<Record<string, string>>
 }
 
@@ -320,8 +328,10 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     intlModelContextWindows: () => numberMap(field('intlModelContextWindows')),
     intlModelAliases: () => stringMap(field('intlModelAliases')),
     codebuddyDisplayName: () => nonEmpty(field('codebuddyDisplayName'), 'CodeBuddy'),
-    codebuddyDisabledModels: () => stringList(field('codebuddyDisabledModels')),
-    codebuddyModelContextWindows: () => numberMap(field('codebuddyModelContextWindows')),
+    codebuddyGlobalDisabledModels: () => stringList(field('codebuddyGlobalDisabledModels')),
+    codebuddyCnDisabledModels: () => stringList(field('codebuddyCnDisabledModels')),
+    codebuddyGlobalModelContextWindows: () => numberMap(field('codebuddyGlobalModelContextWindows')),
+    codebuddyCnModelContextWindows: () => numberMap(field('codebuddyCnModelContextWindows')),
     codebuddyModelAliases: () => stringMap(field('codebuddyModelAliases')),
   }
 }
@@ -361,8 +371,10 @@ export function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig 
     intlModelContextWindows: live.intlModelContextWindows(),
     intlModelAliases: live.intlModelAliases(),
     codebuddyDisplayName: live.codebuddyDisplayName(),
-    codebuddyDisabledModels: live.codebuddyDisabledModels(),
-    codebuddyModelContextWindows: live.codebuddyModelContextWindows(),
+    codebuddyGlobalDisabledModels: live.codebuddyGlobalDisabledModels(),
+    codebuddyCnDisabledModels: live.codebuddyCnDisabledModels(),
+    codebuddyGlobalModelContextWindows: live.codebuddyGlobalModelContextWindows(),
+    codebuddyCnModelContextWindows: live.codebuddyCnModelContextWindows(),
     codebuddyModelAliases: live.codebuddyModelAliases(),
   }
 }

@@ -89,11 +89,14 @@ export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
   })
 }
 
-/** Build model rows for the CodeBuddy adapter. */
-export async function buildCodeBuddyRows(adapter: CodeBuddyAdapter): Promise<ModelRow[]> {
-  const live = await adapter.describeCatalog()
+/** Build model rows for the CodeBuddy adapter, for one login region. */
+export async function buildCodeBuddyRows(
+  adapter: CodeBuddyAdapter,
+  region?: CodeBuddyRegion,
+): Promise<ModelRow[]> {
+  const live = await adapter.describeCatalog(region)
   return live.map(entry => {
-    const override = adapter.contextWindowFor(entry.id)
+    const override = adapter.contextWindowFor(entry.id, region)
     const choices = new Set<number>(entry.contextWindows)
     choices.add(entry.defaultContextWindow)
     if (override !== undefined) choices.add(override)
@@ -101,7 +104,7 @@ export async function buildCodeBuddyRows(adapter: CodeBuddyAdapter): Promise<Mod
       id: entry.id,
       name: entry.name,
       ...entry.description === undefined ? {} : { description: entry.description },
-      enabled: !adapter.isModelDisabled(entry.id),
+      enabled: !adapter.isModelDisabled(entry.id, region),
       vision: entry.vision,
       contextWindow: override ?? entry.defaultContextWindow,
       contextWindows: [...choices].sort((a, b) => a - b),
@@ -163,18 +166,52 @@ export async function handleApi(
     const codebuddy = queryBrand === 'codebuddy' ? adapter as CodeBuddyAdapter : undefined
 
     if (path === '/models' && method === 'GET') {
-      if (url.searchParams.get('fresh') === '1') adapter.invalidateCatalog()
+      const requestedRegion = url.searchParams.get('region')
+      const region = requestedRegion === null || requestedRegion === ''
+        ? undefined
+        : regionFrom(requestedRegion)
+      if (codebuddy !== undefined && region === undefined && requestedRegion !== null && requestedRegion !== '') {
+        send(res, 400, { error: 'region 只接受 global 或 cn' })
+        return
+      }
+      if (url.searchParams.get('fresh') === '1') {
+        if (codebuddy !== undefined) codebuddy.invalidateCatalog(region)
+        else adapter.invalidateCatalog()
+      }
+      const signedIn = codebuddy?.isSignedIn(region)
       const rows = codebuddy !== undefined
-        ? await buildCodeBuddyRows(codebuddy)
+        ? signedIn === false ? [] : await buildCodeBuddyRows(codebuddy, region)
         : await buildRows(adapter as QoderAdapter)
-      const notice = rows.length === 0 ? adapter.catalogError() : undefined
-      send(res, 200, { brand: queryBrand, models: rows, ...notice === undefined ? {} : { notice } })
+      const notice = rows.length === 0
+        ? codebuddy === undefined ? adapter.catalogError() : codebuddy.catalogError(region)
+        : undefined
+      send(res, 200, {
+        brand: queryBrand,
+        models: rows,
+        // Echo the region so the page can refuse a response that belongs to
+        // the other login: a harmless extra field for the Qoder brands.
+        ...region === undefined ? {} : { region },
+        ...signedIn === undefined ? {} : { signedIn },
+        ...notice === undefined ? {} : { notice },
+      })
       return
     }
 
     if (path === '/usage' && method === 'GET') {
-      const snapshot = await adapter.usageInfo(url.searchParams.get('fresh') === '1')
-      send(res, 200, { brand: queryBrand, ...snapshot })
+      const requested = url.searchParams.get('region')
+      const region = requested === null || requested === '' ? undefined : regionFrom(requested)
+      if (codebuddy !== undefined && region === undefined && requested !== null && requested !== '') {
+        send(res, 400, { error: 'region 只接受 global 或 cn' })
+        return
+      }
+      const snapshot = codebuddy !== undefined
+        ? await codebuddy.usageInfo(url.searchParams.get('fresh') === '1', region)
+        : await adapter.usageInfo(url.searchParams.get('fresh') === '1')
+      send(res, 200, {
+        brand: queryBrand,
+        ...snapshot,
+        ...codebuddy === undefined ? {} : { signedIn: codebuddy.isSignedIn(region) },
+      })
       return
     }
 

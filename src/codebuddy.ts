@@ -13,7 +13,6 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
 import { EMPTY_RESPONSE_CODE, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type {
   FinishReason, GenerateOptions, StreamChunk, TokenUsage,
@@ -22,6 +21,8 @@ import type {
   CanUseTool, Message, RawLanguageModel, UserMessage,
 } from '@tencent-ai/agent-sdk'
 import type { CodeBuddyRegion } from './brand.ts'
+import { CodeBuddyStateStore, codeBuddyCliDir } from './codebuddy-state.ts'
+import type { CodeBuddySavedUser } from './codebuddy-state.ts'
 import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
@@ -40,6 +41,8 @@ export const CODEBUDDY_CACHE_TTL_MS = 300_000
 export const CODEBUDDY_FETCH_TIMEOUT_MS = 30_000
 /** How long a login waits for the browser before giving up. */
 const LOGIN_TIMEOUT_MS = 300_000
+/** Bound for clearing stale credentials before a fresh browser login. */
+const LOGOUT_TIMEOUT_MS = 20_000
 
 /** The session object the SDK's createSession returns (not a named export). */
 type SessionImpl = ReturnType<typeof import('@tencent-ai/agent-sdk').unstable_v2_createSession>
@@ -64,9 +67,24 @@ export interface CodeBuddyModel {
 
 /** One signed-in CodeBuddy account. */
 export interface CodeBuddyAccount {
+  uid?: string
+  userId?: string
+  userName?: string
   email?: string
   organization?: string
   subscriptionType?: string
+}
+
+/**
+ * Whether the CLI answered as the anonymous fallback.
+ *
+ * With an invalid `CODEBUDDY_AUTH_TOKEN` the CLI still reports an account
+ * object whose uid is `anonymous`; treating that as a login would show a
+ * signed-in card and try the quota endpoint with a dead credential.
+ */
+function isUnauthenticatedAccount(account: CodeBuddyAccount): boolean {
+  return Object.keys(account).length === 0
+    || (account.uid ?? account.userId) === 'anonymous'
 }
 
 /** One credit package inside a CodeBuddy quota reading. */
@@ -111,9 +129,55 @@ const CLIENT_VERSION = '2.174.0'
 /** Tokens obtained from a successful login or a silent auth read, per region. */
 const bearerTokens = new Map<CodeBuddyRegion, string>()
 
-/** Remember a bearer token in memory only; it is never written to disk. */
-function rememberBearerToken(region: CodeBuddyRegion, token: string): void {
-  if (token.length > 0) bearerTokens.set(region, token)
+/** Persisted per-region login and account snapshots. */
+export const codeBuddyState = new CodeBuddyStateStore()
+
+/** The region's bearer token, falling back to the persisted copy. */
+function tokenFor(region: CodeBuddyRegion): string | undefined {
+  const cached = bearerTokens.get(region)
+  if (cached !== undefined) return cached
+  const saved = codeBuddyState.token(region)
+  if (saved !== undefined) bearerTokens.set(region, saved)
+  return saved
+}
+
+/**
+ * The child-process environment for one region's CLI.
+ *
+ * Two things ride here:
+ *
+ * - `CODEBUDDY_AUTH_TOKEN`, so a saved login works without another browser
+ *   round trip.
+ * - `CODEBUDDY_CONFIG_DIR`, a directory of this region's own. The CLI stores
+ *   its product environment inside that directory and only switches it during
+ *   initialize, while its model provider has already chosen a catalog. With a
+ *   shared directory, switching regions read the other region's catalog and
+ *   cached it, which made the model list — and the enabled/disabled choices
+ *   derived from it — belong to the wrong region. One directory per region
+ *   pins the environment, so a fresh process always reads the right catalog.
+ */
+function cliEnv(region: CodeBuddyRegion): { env: Record<string, string> } {
+  const env: Record<string, string> = { CODEBUDDY_CONFIG_DIR: codeBuddyCliDir(region) }
+  const token = tokenFor(region)
+  if (token !== undefined) env.CODEBUDDY_AUTH_TOKEN = token
+  return { env }
+}
+
+/** Remember a bearer token in memory and on disk. */
+function rememberBearerToken(region: CodeBuddyRegion, token: string, user?: CodeBuddySavedUser): void {
+  if (token.length === 0) return
+  bearerTokens.set(region, token)
+  codeBuddyState.patch(region, {
+    token,
+    signedIn: true,
+    ...user === undefined ? {} : { user },
+  })
+}
+
+/** Stop using a credential without losing the remembered account card. */
+function forgetToken(region: CodeBuddyRegion): void {
+  bearerTokens.delete(region)
+  codeBuddyState.clearToken(region)
 }
 
 /** Login progress for one region. */
@@ -125,6 +189,8 @@ export interface CodeBuddyAuthStatus {
   /** Browser URL, once the CLI hands one over. */
   url?: string
   user?: { userId: string, userName: string, userNickname: string }
+  /** Whether a usable credential is available for this region. */
+  signedIn?: boolean
   error?: string
 }
 
@@ -176,6 +242,7 @@ async function withSession<T>(
     sessionId: options.sessionId ?? randomUUID(),
     ...options.model === undefined ? {} : { model: options.model },
     ...options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt },
+    ...cliEnv(region),
     settingSources: [],
     persistSession: false,
   })
@@ -215,9 +282,9 @@ export class CodeBuddyCatalog {
     private readonly timeoutMs: Live<number> = CODEBUDDY_FETCH_TIMEOUT_MS,
   ) {}
 
-  /** Models for the current region; a failed refresh keeps the last good list. */
-  async models(): Promise<readonly CodeBuddyModel[]> {
-    const region = readLive(this.region, 'global')
+  /** Models for one region; a failed refresh keeps the last good list. */
+  async models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]> {
+    const region = requested ?? readLive(this.region, 'global')
     const ttl = readLive(this.ttlMs, CODEBUDDY_CACHE_TTL_MS)
     const cached = this.snapshots.get(region)
     if (cached !== undefined && Date.now() - cached.at < ttl) return cached.models
@@ -238,14 +305,18 @@ export class CodeBuddyCatalog {
   }
 
   /** Why the last refresh failed, or undefined when it succeeded. */
-  error(): string | undefined {
-    return this.failures.get(readLive(this.region, 'global'))
+  error(requested?: CodeBuddyRegion): string | undefined {
+    return this.failures.get(requested ?? readLive(this.region, 'global'))
   }
 
   invalidate(region?: CodeBuddyRegion): void {
-    if (region === undefined) this.snapshots.clear()
-    else this.snapshots.delete(region)
-    this.failures.clear()
+    if (region === undefined) {
+      this.snapshots.clear()
+      this.failures.clear()
+      return
+    }
+    this.snapshots.delete(region)
+    this.failures.delete(region)
   }
 
   private async fetch(region: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]> {
@@ -259,8 +330,8 @@ export class CodeBuddyCatalog {
 
 /** Read the signed-in account once per TTL. */
 export class CodeBuddyAccountReader {
-  private cached: { at: number, snapshot: CodeBuddyUsageSnapshot, region: CodeBuddyRegion } | undefined
-  private inflight: Promise<CodeBuddyUsageSnapshot> | undefined
+  private readonly cached = new Map<CodeBuddyRegion, CodeBuddyUsageSnapshot>()
+  private readonly inflight = new Map<CodeBuddyRegion, Promise<CodeBuddyUsageSnapshot>>()
 
   constructor(
     private readonly region: Live<CodeBuddyRegion>,
@@ -268,38 +339,66 @@ export class CodeBuddyAccountReader {
     private readonly timeoutMs: Live<number> = CODEBUDDY_FETCH_TIMEOUT_MS,
   ) {}
 
-  async read(fresh = false): Promise<CodeBuddyUsageSnapshot> {
-    const region = readLive(this.region, 'global')
-    if (!fresh && this.cached !== undefined && this.cached.region === region
-      && Date.now() - this.cached.at < readLive(this.ttlMs, CODEBUDDY_CACHE_TTL_MS)) return this.cached.snapshot
-    this.inflight ??= this.fetch(region).finally(() => { this.inflight = undefined })
-    const snapshot = await this.inflight
-    this.cached = { at: snapshot.at, snapshot, region }
+  /**
+   * The account for one region.
+   *
+   * A non-fresh read answers from the persisted snapshot first, so switching
+   * the region selector paints immediately; the page follows with `fresh=1`
+   * to replace it with a live CLI reading.
+   */
+  async read(fresh = false, requested?: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot> {
+    const region = requested ?? readLive(this.region, 'global')
+    if (!fresh) {
+      const memory = this.cached.get(region)
+      if (memory !== undefined) return memory
+      const saved = codeBuddyState.usage(region)
+      if (saved !== undefined) {
+        this.cached.set(region, saved)
+        return saved
+      }
+    }
+    let pending = this.inflight.get(region)
+    if (pending === undefined) {
+      pending = this.fetch(region).finally(() => { this.inflight.delete(region) })
+      this.inflight.set(region, pending)
+    }
+    const snapshot = await pending
+    this.cached.set(region, snapshot)
     return snapshot
   }
 
-  invalidate(): void {
-    this.cached = undefined
+  invalidate(region?: CodeBuddyRegion): void {
+    if (region === undefined) this.cached.clear()
+    else this.cached.delete(region)
   }
 
   private async fetch(region: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot> {
     const at = Date.now()
+    // No saved credential means this region was explicitly signed out. Never
+    // probe the CLI here: it may hold the *other* region's single cached
+    // login, and adopting that account would misattribute it to this region.
+    if (tokenFor(region) === undefined) {
+      return { at, error: `${region === 'cn' ? 'CodeBuddy 国内版' : 'CodeBuddy 国际版'}尚未登录，请在页面顶部选择该区域并登录。` }
+    }
     try {
       const account = await readAccount(region, readLive(this.timeoutMs, CODEBUDDY_FETCH_TIMEOUT_MS))
-      // An unauthenticated CLI answers with an empty object rather than an
-      // error, which must not read as "signed in with no details".
-      if (Object.keys(account).length === 0) {
+      // An unauthenticated CLI answers with an empty object or an anonymous
+      // account, which must not read as "signed in with no details".
+      if (isUnauthenticatedAccount(account)) {
+        forgetToken(region)
+        codeBuddyState.patch(region, { signedIn: false, account: undefined, quota: undefined, quotaError: undefined, at })
         return { at, error: `${region === 'cn' ? 'CodeBuddy 国内版' : 'CodeBuddy 国际版'}尚未登录，请在页面顶部选择该区域并登录。` }
       }
+      codeBuddyState.patch(region, { signedIn: true, account, at })
       try {
         const quota = await readQuotaWithToken(region)
+        codeBuddyState.patch(region, { quota, quotaError: undefined, at })
         return { at, account, quota }
       } catch (quotaError) {
-        return {
-          at,
-          account,
-          quotaError: quotaError instanceof Error ? quotaError.message : String(quotaError),
-        }
+        const message = quotaError instanceof Error ? quotaError.message : String(quotaError)
+        if (isExpiredToken(message)) forgetToken(region)
+        else codeBuddyState.patch(region, { quota: undefined, quotaError: message })
+        return { at, account, quotaError: message }
       }
     } catch (error) {
       return { at, error: authErrorText(region, error) }
@@ -319,6 +418,7 @@ async function readAccount(region: CodeBuddyRegion, timeoutMs: number): Promise<
     prompt: inertInput(),
     options: {
       environment: codeBuddyEnvironment(region),
+      ...cliEnv(region),
       tools: [],
       settingSources: [],
       maxTurns: 1,
@@ -440,7 +540,7 @@ function formatLocalTime(date: Date): string {
  * is not signed in the call times out; callers treat that as "log in first".
  */
 async function readBearerToken(region: CodeBuddyRegion): Promise<string> {
-  const cached = bearerTokens.get(region)
+  const cached = tokenFor(region)
   if (cached !== undefined) return cached
   const sdk = await loadCodeBuddySdk()
   const result = await withTimeout(sdk.unstable_v2_authenticate({
@@ -450,7 +550,11 @@ async function readBearerToken(region: CodeBuddyRegion): Promise<string> {
       // A quota read must never pop a browser; the page owns login.
     },
   }), 6000)
-  rememberBearerToken(region, result.userinfo.token)
+  rememberBearerToken(region, result.userinfo.token, {
+    userId: result.userinfo.userId,
+    userName: result.userinfo.userName,
+    userNickname: result.userinfo.userNickname,
+  })
   return result.userinfo.token
 }
 
@@ -518,6 +622,11 @@ export async function fetchCodeBuddyQuota(
   return parseCodeBuddyQuota(payload)
 }
 
+/** Whether a quota failure means the stored credential is no longer usable. */
+function isExpiredToken(message: string): boolean {
+  return /401|403|登录已过期|unauthor|token/i.test(message)
+}
+
 /** Read quota, retrying once with a fresh token after an auth failure. */
 async function readQuotaWithToken(region: CodeBuddyRegion): Promise<CodeBuddyQuota> {
   const token = await readBearerToken(region).catch((error: unknown) => {
@@ -527,8 +636,8 @@ async function readQuotaWithToken(region: CodeBuddyRegion): Promise<CodeBuddyQuo
     return await fetchCodeBuddyQuota(region, token)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    if (!/401|登录已过期|unauthor|token/i.test(detail)) throw error
-    bearerTokens.delete(region)
+    if (!isExpiredToken(detail)) throw error
+    forgetToken(region)
     const renewed = await readBearerToken(region).catch((renewError: unknown) => {
       throw new Error(authErrorText(region, renewError))
     })
@@ -557,77 +666,98 @@ export class CodeBuddyAuth {
   ): { started: true } | { started: false, error: string } {
     const existing = this.runs.get(region)
     if (existing?.status.running === true) return { started: false, error: '该区域正在登录，请先在浏览器中完成。' }
-    const status: CodeBuddyAuthStatus = { running: true, region, startedAt: Date.now() }
-    this.runs.set(region, { status })
-    void this.login(region, status, onFinish)
+    // A login click always starts a browser flow. The SDK would otherwise
+    // silently reuse any token the CLI still has on disk.
+    bearerTokens.delete(region)
+    codeBuddyState.clear(region)
+    const run: AuthRun = { status: { running: true, region, startedAt: Date.now(), signedIn: false } }
+    this.runs.set(region, run)
+    void this.login(run, onFinish)
     return { started: true }
   }
 
   status(region: CodeBuddyRegion): CodeBuddyAuthStatus {
-    return this.runs.get(region)?.status ?? { running: false, region }
+    const run = this.runs.get(region)
+    if (run !== undefined) return run.status
+    const saved = codeBuddyState.region(region)
+    return {
+      running: false,
+      region,
+      signedIn: saved?.signedIn === true,
+      ...saved?.user === undefined ? {} : { user: saved.user },
+    }
   }
 
   /** Clear the cached credential for one region. */
   async logout(region: CodeBuddyRegion): Promise<{ ok: true } | { ok: false, error: string }> {
+    let failure: string | undefined
     try {
       const sdk = await loadCodeBuddySdk()
       await withTimeout(
         sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region) }),
         CODEBUDDY_FETCH_TIMEOUT_MS,
       )
-      this.runs.delete(region)
-      bearerTokens.delete(region)
-      return { ok: true }
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      failure = error instanceof Error ? error.message : String(error)
     }
+    // Local state goes first: even if the CLI refuses, this process must stop
+    // presenting the account as signed in.
+    this.runs.delete(region)
+    bearerTokens.delete(region)
+    codeBuddyState.clear(region)
+    return failure === undefined ? { ok: true } : { ok: false, error: failure }
   }
 
-  private async login(
-    region: CodeBuddyRegion,
-    status: CodeBuddyAuthStatus,
-    onFinish?: (ok: boolean) => void,
-  ): Promise<void> {
+  /** False once this run was replaced or cancelled by logout. */
+  private current(run: AuthRun): boolean {
+    return this.runs.get(run.status.region) === run
+  }
+
+  private async login(run: AuthRun, onFinish?: (ok: boolean) => void): Promise<void> {
+    const { status } = run
+    const { region } = status
     try {
       const sdk = await loadCodeBuddySdk()
+      // `authenticate()` short-circuits when the CLI still has a token on disk:
+      // it returns that token without ever calling `onAuthUrl`, so the click
+      // looks dead and an expired credential survives forever. A login click
+      // always means "open the browser", so drop the stored credential first.
+      await withTimeout(
+        sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region) }),
+        LOGOUT_TIMEOUT_MS,
+      ).catch(() => undefined)
+      if (!this.current(run)) return
+      bearerTokens.delete(region)
       const result = await sdk.unstable_v2_authenticate({
         environment: codeBuddyEnvironment(region),
         timeout: LOGIN_TIMEOUT_MS,
         onAuthUrl: (state) => {
+          // The bundled CLI opens the browser itself as part of the login
+          // flow. Opening it here too produced two identical tabs, so this
+          // only records the URL for the card's manual fallback link.
           status.url = state.authUrl
-          openBrowser(state.authUrl)
         },
       })
+      if (!this.current(run)) return
       status.running = false
       status.finishedAt = Date.now()
-      status.user = {
+      const user = {
         userId: result.userinfo.userId,
         userName: result.userinfo.userName,
         userNickname: result.userinfo.userNickname,
       }
-      rememberBearerToken(region, result.userinfo.token)
+      status.user = user
+      status.signedIn = true
+      rememberBearerToken(region, result.userinfo.token, user)
       onFinish?.(true)
     } catch (error) {
+      if (!this.current(run)) return
       status.running = false
       status.finishedAt = Date.now()
+      status.signedIn = false
       status.error = authErrorText(region, error)
       onFinish?.(false)
     }
-  }
-}
-
-/** Open a URL in the user's browser without going through a shell string. */
-function openBrowser(url: string): void {
-  try {
-    const command = process.platform === 'win32'
-      ? { file: 'cmd.exe', args: ['/d', '/c', 'start', '', url] }
-      : process.platform === 'darwin'
-        ? { file: 'open', args: [url] }
-        : { file: 'xdg-open', args: [url] }
-    const child = spawn(command.file, command.args, { detached: true, stdio: 'ignore', windowsHide: true })
-    child.unref()
-  } catch {
-    // The URL is also shown in the page; failing to open a browser is not fatal.
   }
 }
 
@@ -805,6 +935,7 @@ export class CodeBuddySession {
       model: this.model,
       mcpServers: { [MCP_SERVER_NAME]: this.mcp },
       canUseTool: this.canUseTool as CanUseTool,
+      ...cliEnv(this.region),
       settingSources: [],
       includePartialMessages: true,
       persistSession: false,
@@ -1097,6 +1228,7 @@ export async function codeBuddyColdStream(
     environment: codeBuddyEnvironment(region),
     sessionId: randomUUID(),
     ...model === undefined ? {} : { model },
+    ...cliEnv(region),
     settingSources: [],
     persistSession: false,
   })

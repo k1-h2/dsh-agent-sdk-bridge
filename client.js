@@ -130,6 +130,9 @@ window.__ModuleLoader__.load({
       codebuddyLogin: '登录',
       codebuddyLogout: '退出登录',
       codebuddyLoggingIn: '请在浏览器中完成登录…',
+      codebuddyLoginPrompt: '登录后这里会显示账号与额度信息。',
+      codebuddyModelsHint: '请先登录 CodeBuddy，登录后才会读取并显示可用模型。',
+      codebuddyRegionMismatch: '宿主返回的模型列表不属于当前区域，请刷新页面后重试。',
       codebuddyLoginStarted: '已打开浏览器，完成登录后这里会自动更新。',
       codebuddyLoginFailed: '登录失败',
       codebuddyOpenUrl: '手动打开登录页',
@@ -251,6 +254,9 @@ window.__ModuleLoader__.load({
       codebuddyLogin: 'Sign in',
       codebuddyLogout: 'Sign out',
       codebuddyLoggingIn: 'Finish the sign-in in your browser…',
+      codebuddyLoginPrompt: 'Sign in to see the account and quota here.',
+      codebuddyModelsHint: 'Sign in to CodeBuddy first; the model catalog is read only after sign-in.',
+      codebuddyRegionMismatch: 'The host answered with the other region\'s models; reload the page and try again.',
       codebuddyLoginStarted: 'Browser opened; this card updates when the login completes.',
       codebuddyLoginFailed: 'Sign-in failed',
       codebuddyOpenUrl: 'Open the sign-in page',
@@ -366,8 +372,9 @@ window.__ModuleLoader__.load({
         noModelsKey: 'codebuddyNoModels',
         fields: {
           enabled: 'codebuddyEnabled',
-          disabled: 'codebuddyDisabledModels',
-          windows: 'codebuddyModelContextWindows',
+          // The page swaps these for the selected login region's own fields.
+          disabled: 'codebuddyGlobalDisabledModels',
+          windows: 'codebuddyGlobalModelContextWindows',
         },
       },
     ]
@@ -700,118 +707,197 @@ window.__ModuleLoader__.load({
      * CodeBuddy's account card: region choice, browser login/logout and the
      * signed-in account.
      *
-     * The region is a config write (the host starts the CLI with it); login is
-     * a host-side SDK flow whose URL opens in the browser. While a login runs
-     * the card polls the host, because the credential is written by the CLI
-     * after the browser round trip.
+     * The region is a config write (the host starts the CLI with it), but the
+     * card does not wait for it: the target region's snapshot paints first and
+     * the live account read follows. Both regions keep their own saved login,
+     * so switching back does not open the browser again.
      */
-    function CodeBuddyCard({ t, ctx, brand, refreshSignal, onSignedIn }) {
+    function codeBuddySnapshot(region) {
+      const cached = readCache('codebuddy', `snapshot:${region}`)
+      return cached !== null && typeof cached === 'object' ? cached : undefined
+    }
+
+    function rememberCodeBuddy(region, patch) {
+      const previous = codeBuddySnapshot(region) ?? {}
+      writeCache('codebuddy', `snapshot:${region}`, { ...previous, ...patch, at: Date.now() })
+    }
+
+    function CodeBuddyCard({ t, ctx, brand, refreshSignal, onSignedIn, onAuthChange, onRegionChange }) {
       const form = ctx.configForms.get(NS)
       const subscribe = useCallback(listener => form.subscribe(listener), [form])
       const read = useCallback(() => form.getSnapshot(), [form])
       const snapshot = useSyncExternalStore(subscribe, read)
       const value = snapshot?.value ?? {}
-      const region = value.codebuddyRegion === 'cn' ? 'cn' : 'global'
-      const [auth, setAuth] = useState(undefined)
-      const [account, setAccount] = useState(undefined)
+      const configuredRegion = value.codebuddyRegion === 'cn' ? 'cn' : 'global'
+      const [region, setRegionState] = useState(configuredRegion)
+      const regionRef = useRef(configuredRegion)
+      const initial = codeBuddySnapshot(configuredRegion)
+      const [auth, setAuth] = useState(initial?.auth)
+      const [account, setAccount] = useState(initial?.account)
       const [error, setError] = useState(undefined)
       const [busy, setBusy] = useState(false)
-      const ticket = useRef(0)
       const lastRunning = useRef(false)
+      const signingIn = auth?.running === true
+      const accountFields = account?.account ?? {}
+      const accountSignedIn = account?.error === undefined
+        && ['uid', 'userName', 'email', 'organization', 'subscriptionType']
+          .some(key => typeof accountFields[key] === 'string' && accountFields[key] !== '')
+      // The host's status is authoritative once it has answered; the account
+      // reading only covers the first paint before that answer arrives.
+      const signedIn = auth === undefined ? accountSignedIn : auth.signedIn === true
+      const resolved = auth !== undefined || account !== undefined
 
-      const loadAccount = useCallback(async (fresh = false) => {
+      const applySnapshot = useCallback(target => {
+        const cached = codeBuddySnapshot(target)
+        setAuth(cached?.auth)
+        setAccount(cached?.account)
+      }, [])
+
+      const loadAccount = useCallback(async (fresh = false, target = regionRef.current) => {
         try {
-          const payload = await api(`/usage?brand=codebuddy${fresh ? '&fresh=1' : ''}`, { timeout: 45_000 })
+          const payload = await api(`/usage?brand=codebuddy&region=${target}${fresh ? '&fresh=1' : ''}`, { timeout: 45_000 })
+          if (regionRef.current !== target) return
           setAccount(payload)
+          rememberCodeBuddy(target, { account: payload })
+          // A quota 401 clears the server's credential; mirror that here so the
+          // button flips back to 登录 without waiting for a page reload.
+          if (typeof payload?.signedIn === 'boolean') {
+            const next = { running: false, region: target, signedIn: payload.signedIn }
+            setAuth(previous => (previous?.running === true ? previous : next))
+            rememberCodeBuddy(target, { auth: next })
+          }
         } catch (err) {
+          if (regionRef.current !== target) return
           setAccount({ error: String(err?.message ?? err) })
         }
       }, [])
 
-      const poll = useCallback(async () => {
+      const poll = useCallback(async (target = regionRef.current) => {
         try {
-          const next = await api(`/auth?brand=codebuddy&region=${region}`, { timeout: 10_000 })
+          const next = await api(`/auth?brand=codebuddy&region=${target}`, { timeout: 10_000 })
+          if (regionRef.current !== target) return
           setAuth(next)
+          rememberCodeBuddy(target, { auth: next })
           if (lastRunning.current && next.running === false) {
             lastRunning.current = false
-            if (next.error === undefined) {
-              await loadAccount(true)
-              onSignedIn?.()
-            }
+            if (next.error === undefined) await loadAccount(true, target)
           }
           if (next.running === true) lastRunning.current = true
         } catch (err) {
+          if (regionRef.current !== target) return
           setError(String(err?.message ?? err))
         }
-      }, [region, loadAccount, onSignedIn])
+      }, [loadAccount])
 
-      useEffect(() => { void poll(); void loadAccount() }, [poll, loadAccount, refreshSignal])
+      // Paint the target region from its snapshot, then verify in the background.
+      useEffect(() => {
+        regionRef.current = region
+        applySnapshot(region)
+        setError(undefined)
+        void poll(region)
+        void loadAccount(false, region)
+        const timer = setTimeout(() => { void loadAccount(true, region) }, 250)
+        return () => clearTimeout(timer)
+      }, [region, refreshSignal, applySnapshot, loadAccount, poll])
+
+      // A config edit from elsewhere (or a reload) becomes the new selection.
+      useEffect(() => {
+        if (configuredRegion === regionRef.current) return
+        setRegionState(configuredRegion)
+        regionRef.current = configuredRegion
+        applySnapshot(configuredRegion)
+      }, [configuredRegion, applySnapshot])
+
       useEffect(() => {
         if (auth?.running !== true) return undefined
-        const timer = setInterval(() => { void poll() }, 1500)
+        const timer = setInterval(() => { void poll(region) }, 1500)
         return () => clearInterval(timer)
-      }, [auth?.running, poll])
+      }, [auth?.running, poll, region])
 
-      const setRegion = useCallback(async (next) => {
-        setBusy(true)
+      useEffect(() => { if (resolved) onAuthChange?.(signedIn) }, [resolved, signedIn, onAuthChange])
+
+      const setRegion = useCallback(next => {
+        if (next === regionRef.current) return
+        // Local paint first; the config write is only needed by the adapter.
+        regionRef.current = next
+        lastRunning.current = false
+        setRegionState(next)
+        applySnapshot(next)
         setError(undefined)
-        try {
-          const accepted = await withDeadline(form.set('codebuddyRegion', next), WRITE_TIMEOUT_MS, t('timeout'))
-          if (accepted === false) throw new Error(t('saveFailed'))
-          setAuth(undefined)
-          await loadAccount(true)
-          onSignedIn?.()
-        } catch (err) {
-          setError(`${t('saveFailed')}：${String(err?.message ?? err)}`)
-        } finally {
-          setBusy(false)
-        }
-      }, [form, loadAccount, onSignedIn, t])
+        onRegionChange?.(next)
+        void (async () => {
+          try {
+            const accepted = await withDeadline(form.set('codebuddyRegion', next), WRITE_TIMEOUT_MS, t('timeout'))
+            if (accepted === false) throw new Error(t('saveFailed'))
+            if (regionRef.current === next) onSignedIn?.()
+          } catch (err) {
+            if (regionRef.current !== next) return
+            setError(`${t('saveFailed')}：${String(err?.message ?? err)}`)
+            const fallback = form.getSnapshot()?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
+            regionRef.current = fallback
+            setRegionState(fallback)
+            applySnapshot(fallback)
+            onRegionChange?.(fallback)
+          }
+        })()
+      }, [applySnapshot, form, onRegionChange, onSignedIn, t])
 
       const startLogin = useCallback(async () => {
+        const target = regionRef.current
         setBusy(true)
         setError(undefined)
         try {
           const next = await api('/auth', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ brand: 'codebuddy', region, action: 'login' }),
+            body: JSON.stringify({ brand: 'codebuddy', region: target, action: 'login' }),
             timeout: 20_000,
           })
+          if (regionRef.current !== target) return
           setAuth(next)
+          rememberCodeBuddy(target, { auth: next })
           if (next.running === true) lastRunning.current = true
         } catch (err) {
+          if (regionRef.current !== target) return
           setError(`${t('codebuddyLoginFailed')}：${String(err?.message ?? err)}`)
         } finally {
           setBusy(false)
         }
-      }, [region, t])
+      }, [t])
 
       const logout = useCallback(async () => {
         if (typeof window.confirm === 'function' && !window.confirm(t('codebuddyConfirmLogout'))) return
+        const target = regionRef.current
         setBusy(true)
         setError(undefined)
         try {
-          setAuth(await api('/auth', {
+          const next = await api('/auth', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ brand: 'codebuddy', region, action: 'logout' }),
+            body: JSON.stringify({ brand: 'codebuddy', region: target, action: 'logout' }),
             timeout: 20_000,
-          }))
+          })
+          if (regionRef.current !== target) return
+          setAuth(next)
           setAccount(undefined)
-          await loadAccount(true)
-          onSignedIn?.()
+          rememberCodeBuddy(target, { auth: next, account: undefined })
+          onAuthChange?.(false)
+          await loadAccount(true, target)
         } catch (err) {
+          if (regionRef.current !== target) return
+          // The host clears its local credential even when the CLI refuses the
+          // logout, so the card must not keep presenting the account.
+          const signedOut = { running: false, region: target, signedIn: false }
+          setAuth(signedOut)
+          setAccount(undefined)
+          rememberCodeBuddy(target, { auth: signedOut, account: undefined })
+          onAuthChange?.(false)
           setError(String(err?.message ?? err))
         } finally {
           setBusy(false)
         }
-      }, [region, loadAccount, onSignedIn, t])
+      }, [loadAccount, onAuthChange, t])
 
-      const running = auth?.running === true
-      const accountFields = account?.account ?? {}
-      const signedIn = account?.error === undefined
-        && ['email', 'organization', 'subscriptionType'].some(key => typeof accountFields[key] === 'string' && accountFields[key] !== '')
       const accountText = account?.account === undefined
         ? (account?.error ?? t('codebuddyAccountUnknown'))
         : [account.account.email, account.account.organization, account.account.subscriptionType]
@@ -824,6 +910,16 @@ window.__ModuleLoader__.load({
       const packages = Array.isArray(quota?.packages)
         ? [...quota.packages].sort((a, b) => (a.end ?? Number.MAX_SAFE_INTEGER) - (b.end ?? Number.MAX_SAFE_INTEGER)).slice(0, 4)
         : []
+      // The website's own usage page, under the profile the CLI login belongs
+      // to. Both regions serve it at the same path.
+      const usageLink = h('a', {
+        href: region === 'cn'
+          ? 'https://copilot.tencent.com/profile/plans-usage'
+          : 'https://www.codebuddy.ai/profile/plans-usage',
+        target: '_blank',
+        rel: 'noreferrer',
+        style: css.link,
+      }, t('usageDetail'))
 
       return h('div', { style: css.usageCard },
         h('div', { style: css.usageHead },
@@ -839,52 +935,57 @@ window.__ModuleLoader__.load({
           h('select', {
             style: css.select,
             value: region,
-            disabled: busy || running,
-            onChange: event => { void setRegion(event.target.value) },
+            disabled: busy,
+            onChange: event => { setRegion(event.target.value) },
           },
             h('option', { key: 'global', value: 'global' }, t('codebuddyRegionGlobal')),
             h('option', { key: 'cn', value: 'cn' }, t('codebuddyRegionCn')),
           ),
           h('button', {
-            style: css.btn,
-            disabled: busy || running,
-            onClick: () => void startLogin(),
-          }, running ? t('codebuddyLoggingIn') : t('codebuddyLogin')),
-          signedIn
-            ? h('button', { style: { ...css.btn, ...css.btnAlert }, disabled: busy || running, onClick: () => void logout() }, t('codebuddyLogout'))
-            : null,
+            style: signedIn ? { ...css.btn, ...css.btnAlert } : css.btn,
+            disabled: busy || signingIn,
+            onClick: () => { if (signedIn) void logout(); else void startLogin() },
+          }, signingIn ? t('codebuddyLoggingIn') : signedIn ? t('codebuddyLogout') : t('codebuddyLogin')),
         ),
-        h('div', { style: css.usageLine },
-          h('span', { style: css.usageLabel }, t('usageAccount')),
-          h('span', { style: css.usageValue }, accountText),
-        ),
-        quota === undefined
-          ? (account?.quotaError !== undefined
-              ? h('div', { style: css.err }, `${t('codebuddyQuotaFailed')}：${account.quotaError}`)
-              : signedIn ? h('div', { style: css.note }, t('codebuddyNoQuota')) : null)
-          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-              h('div', { style: css.usageLine },
-                h('span', { style: css.usageLabel }, t('codebuddyQuotaTitle')),
-                h('span', { style: css.usageValue },
-                  `${t('usageRemaining')} ${creditsOf(quota.remaining)} ${t('usageOf')} ${creditsOf(quota.total)} ${t('usageCredits')}`),
-                quotaPct === undefined ? null : h('span', { style: css.usagePct }, `${quotaPct.toFixed(1)}%`),
-              ),
-              quotaPct === undefined ? null : h('div', { style: css.progressOuter },
-                h('div', { style: { ...css.progressInner, width: `${quotaPct}%` } }),
-              ),
-              packages.length === 0 ? null : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-                h('div', { style: css.note }, t('codebuddyQuotaPackages')),
-                packages.map((pkg, index) => h('div', { key: `${pkg.name}-${index}`, style: css.usageLine },
-                  h('span', { style: { ...css.usageLabel, minWidth: '160px' } }, pkg.name || '—'),
-                  h('span', null, `${creditsOf(pkg.used)} / ${creditsOf(pkg.total)}`),
-                  pkg.end === undefined ? null : h('span', { style: { opacity: 0.55 } }, dateLabel(pkg.end)),
-                )),
-              ),
-              quota.cycleEnd === undefined ? null : h('div', { style: css.usageFoot },
-                h('span', null, `${t('codebuddyQuotaExpires')} ${dateLabel(quota.cycleEnd)}`),
-              ),
-            ),
-        typeof auth?.url === 'string' && running
+        signedIn
+          ? h('div', { style: css.usageLine },
+              h('span', { style: css.usageLabel }, t('usageAccount')),
+              h('span', { style: css.usageValue }, accountText),
+            )
+          : h('div', { style: css.note }, t('codebuddyLoginPrompt')),
+        signedIn
+          ? (quota === undefined
+              ? (account?.quotaError !== undefined
+                  ? h('div', { style: css.err }, `${t('codebuddyQuotaFailed')}：${account.quotaError}`)
+                  : h('div', { style: css.note }, t('codebuddyNoQuota')))
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+                  h('div', { style: css.usageLine },
+                    h('span', { style: css.usageLabel }, t('codebuddyQuotaTitle')),
+                    h('span', { style: css.usageValue },
+                      `${t('usageRemaining')} ${creditsOf(quota.remaining)} ${t('usageOf')} ${creditsOf(quota.total)} ${t('usageCredits')}`),
+                    quotaPct === undefined ? null : h('span', { style: css.usagePct }, `${quotaPct.toFixed(1)}%`),
+                  ),
+                  quotaPct === undefined ? null : h('div', { style: css.progressOuter },
+                    h('div', { style: { ...css.progressInner, width: `${quotaPct}%` } }),
+                  ),
+                  packages.length === 0 ? null : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                    h('div', { style: css.note }, t('codebuddyQuotaPackages')),
+                    packages.map((pkg, index) => h('div', { key: `${pkg.name}-${index}`, style: css.usageLine },
+                      h('span', { style: { ...css.usageLabel, minWidth: '160px' } }, pkg.name || '—'),
+                      h('span', null, `${creditsOf(pkg.used)} / ${creditsOf(pkg.total)}`),
+                      pkg.end === undefined ? null : h('span', { style: { opacity: 0.55 } }, dateLabel(pkg.end)),
+                    )),
+                  ),
+                  h('div', { style: css.usageFoot },
+                    quota.cycleEnd === undefined ? null : h('span', null, `${t('codebuddyQuotaExpires')} ${dateLabel(quota.cycleEnd)}`),
+                    usageLink,
+                  ),
+                ))
+          : null,
+        signedIn && quota === undefined
+          ? h('div', { style: css.usageFoot }, usageLink)
+          : null,
+        typeof auth?.url === 'string' && signingIn
           ? h('div', { style: css.usageLine },
               h('a', { href: auth.url, target: '_blank', rel: 'noreferrer', style: css.link }, t('codebuddyOpenUrl')),
               h('span', { style: css.note }, t('codebuddyLoginStarted')),
@@ -904,10 +1005,20 @@ window.__ModuleLoader__.load({
      * one when the user clicks quickly.
      */
     function SettingsPage({ ctx, t, brand }) {
-      const cached = readCache(brand.id, 'models')
+      const form = ctx.configForms.get(NS)
+      const initialRegion = form.getSnapshot()?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
+      // Each CodeBuddy region has its own catalog, deny-list and windows; the
+      // page key follows the region so switching shows that region's choices.
+      const [region, setRegion] = useState(initialRegion)
+      const modelsKind = brand.id === 'codebuddy' ? `models:${region}` : 'models'
+      const cached = readCache(brand.id, modelsKind)
       const [models, setModels] = useState(() => Array.isArray(cached?.rows) ? cached.rows : undefined)
       const [catalogNotice, setCatalogNotice] = useState(() =>
         typeof cached?.notice === 'string' ? cached.notice : undefined)
+      const [signedIn, setSignedIn] = useState(() =>
+        brand.id === 'codebuddy'
+          ? cached?.signedIn === true || codeBuddySnapshot(initialRegion)?.auth?.signedIn === true
+          : undefined)
       const [error, setError] = useState(undefined)
       const [status, setStatus] = useState(undefined)
       const [busy, setBusy] = useState(false)
@@ -920,10 +1031,38 @@ window.__ModuleLoader__.load({
        *  make every write look stale the moment its own refresh landed. */
       const writeTicket = useRef(0)
 
-      const form = ctx.configForms.get(NS)
       const subscribe = useCallback(listener => form.subscribe(listener), [form])
       const read = useCallback(() => form.getSnapshot(), [form])
       const snapshot = useSyncExternalStore(subscribe, read)
+
+      const configuredRegion = snapshot?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
+      /**
+       * The region the user just picked, until the config write lands.
+       *
+       * Without this, a snapshot that still carries the old value would pull
+       * the selection back mid-switch.
+       */
+      const pendingRegion = useRef(null)
+      useEffect(() => {
+        if (brand.id !== 'codebuddy') return
+        if (pendingRegion.current !== null) {
+          if (pendingRegion.current === configuredRegion) pendingRegion.current = null
+          return
+        }
+        setRegion(current => (current === configuredRegion ? current : configuredRegion))
+      }, [brand.id, configuredRegion, region])
+
+      const selectRegion = useCallback(next => {
+        pendingRegion.current = next
+        setRegion(next)
+      }, [])
+
+      const fields = brand.id === 'codebuddy'
+        ? {
+            disabled: region === 'cn' ? 'codebuddyCnDisabledModels' : 'codebuddyGlobalDisabledModels',
+            windows: region === 'cn' ? 'codebuddyCnModelContextWindows' : 'codebuddyGlobalModelContextWindows',
+          }
+        : brand.fields
 
       const describeFace = ctx.configForms.describe()
       const describeSubscribe = useCallback(listener => describeFace.subscribe(listener), [describeFace])
@@ -932,36 +1071,88 @@ window.__ModuleLoader__.load({
       useEffect(() => { describeFace.ensure().catch(() => undefined) }, [describeFace])
 
       const fetchModels = useCallback(async (fresh = false) => {
-        const payload = await api(`/models?brand=${brand.id}${fresh ? '&fresh=1' : ''}`)
+        const regionQuery = brand.id === 'codebuddy' ? `&region=${region}` : ''
+        const payload = await api(`/models?brand=${brand.id}${regionQuery}${fresh ? '&fresh=1' : ''}`)
+        // Never adopt a table the host answered for another login region.
+        if (brand.id === 'codebuddy' && typeof payload?.region === 'string' && payload.region !== region) {
+          throw new Error(t('codebuddyRegionMismatch'))
+        }
         return {
           rows: Array.isArray(payload?.models) ? payload.models : [],
           notice: typeof payload?.notice === 'string' ? payload.notice : undefined,
+          signedIn: brand.id === 'codebuddy' ? payload?.signedIn === true : undefined,
         }
-      }, [brand.id])
+      }, [brand.id, region, t])
 
-      /** Adopt one read and remember it for the next visit to this page. */
-      const adopt = useCallback((rows, notice) => {
+      /** Adopt one read and remember it for the next visit to this region. */
+      const adopt = useCallback((rows, notice, nextSignedIn) => {
         setModels(rows)
         setCatalogNotice(notice)
-        writeCache(brand.id, 'models', { rows, notice, at: Date.now() })
-      }, [brand.id])
+        setSignedIn(nextSignedIn)
+        writeCache(brand.id, modelsKind, { rows, notice, signedIn: nextSignedIn, at: Date.now() })
+      }, [brand.id, modelsKind])
 
       /** Read the list. `fresh` asks the host to drop its catalog cache first. */
       const load = useCallback(async (fresh = false) => {
+        const requestedKind = modelsKind
         setError(undefined)
         const mine = ++ticket.current
         try {
-          const { rows, notice } = await fetchModels(fresh)
-          if (mine !== ticket.current) return
-          adopt(rows, notice)
+          const { rows, notice, signedIn: nextSignedIn } = await fetchModels(fresh)
+          if (mine !== ticket.current || kindRef.current !== requestedKind) return
+          adopt(rows, notice, nextSignedIn)
         } catch (err) {
-          if (mine !== ticket.current) return
+          if (mine !== ticket.current || kindRef.current !== requestedKind) return
           setError(String(err?.message ?? err))
           setModels(previous => previous ?? [])
         }
-      }, [adopt, fetchModels])
+      }, [adopt, fetchModels, modelsKind])
 
-      useEffect(() => { void load() }, [load])
+      /** Latest values for callbacks the account card holds across renders. */
+      const loadRef = useRef(load)
+      loadRef.current = load
+      const kindRef = useRef(modelsKind)
+      kindRef.current = modelsKind
+      /** The region of the last model read; a change forces a fresh read. */
+      const lastLoaded = useRef(undefined)
+      const refresh = useCallback(() => { void loadRef.current() }, [])
+
+      /**
+       * On a region switch, paint that region's remembered table first and
+       * then verify it with the host. The read carries the region explicitly,
+       * so it stays correct even before the config write commits.
+       */
+      useEffect(() => {
+        if (brand.id === 'codebuddy') {
+          const saved = readCache(brand.id, modelsKind)
+          setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
+          setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
+          // The account snapshot already knows whether this region is signed
+          // in, so the locked view does not flash while the catalog boots.
+          setSignedIn(saved?.signedIn === true || codeBuddySnapshot(region)?.auth?.signedIn === true)
+          setError(undefined)
+        }
+        // A switch must not be served from the host's cached catalog: the CLI
+        // only settles into the new login environment on a fresh read.
+        const switched = brand.id === 'codebuddy'
+          && lastLoaded.current !== undefined
+          && lastLoaded.current !== region
+        lastLoaded.current = region
+        void load(switched)
+      }, [brand.id, modelsKind, region, load])
+
+      /** Login/logout flips which catalog the page is allowed to show. */
+      const handleAuthChange = useCallback(next => {
+        if (brand.id !== 'codebuddy') return
+        setSignedIn(next === true)
+        if (next === true) {
+          refresh()
+          return
+        }
+        setModels([])
+        setCatalogNotice(undefined)
+        writeCache(brand.id, kindRef.current, { rows: [], notice: undefined, signedIn: false, at: Date.now() })
+      }, [brand.id, refresh])
 
       /**
        * Re-read until the list reflects what was just written, or give up.
@@ -979,11 +1170,14 @@ window.__ModuleLoader__.load({
        */
       const loadUntil = useCallback(async (verify, attempts = 5) => {
         let rows
+        const requestedKind = kindRef.current
         for (let attempt = 0; attempt < attempts; attempt++) {
           try {
             const read = await fetchModels()
+            // A region switch during the save invalidates this verification.
+            if (kindRef.current !== requestedKind) return undefined
             rows = read.rows
-            adopt(rows, read.notice)
+            adopt(rows, read.notice, read.signedIn)
           } catch (err) {
             setError(String(err?.message ?? err))
             return undefined
@@ -1054,8 +1248,8 @@ window.__ModuleLoader__.load({
         if (enabled) next.delete(id)
         else next.add(id)
         setModels(current => current?.map(m => m.id === id ? { ...m, enabled } : m))
-        return write(brand.fields.disabled, [...next], list => list.some(m => m.id === id && m.enabled === enabled))
-      }, [brand.fields.disabled, write])
+        return write(fields.disabled, [...next], list => list.some(m => m.id === id && m.enabled === enabled))
+      }, [fields.disabled, write])
 
       /** Write the whole per-model window map, again showing the choice at once. */
       const writeWindow = useCallback((rows, id, window) => {
@@ -1067,12 +1261,12 @@ window.__ModuleLoader__.load({
           ? { ...m, override: window, contextWindow: window ?? m.defaultContextWindow }
           : m))
         return write(
-          brand.fields.windows,
+          fields.windows,
           next,
           list => list.some(m => m.id === id
             && (window === undefined ? m.override === undefined : m.override === window)),
         )
-      }, [brand.fields.windows, write])
+      }, [fields.windows, write])
 
       /**
        * Flip every model at once.
@@ -1084,11 +1278,11 @@ window.__ModuleLoader__.load({
         const ids = (models ?? []).map(m => m.id)
         setModels(current => current?.map(m => ({ ...m, enabled })))
         return write(
-          brand.fields.disabled,
+          fields.disabled,
           enabled ? [] : ids,
           list => list.every(m => m.enabled === enabled),
         )
-      }, [brand.fields.disabled, models, write])
+      }, [fields.disabled, models, write])
 
       // ── CLI helper ────────────────────────────────────────────────────────
       // The host runs the script, so the page only asks and then reads what it
@@ -1183,6 +1377,29 @@ window.__ModuleLoader__.load({
         })
       }, [all, query, onlyEnabled])
 
+      const codebuddyLocked = brand.id === 'codebuddy' && signedIn !== true
+      const authCard = brand.kind === 'codebuddy'
+        ? h(CodeBuddyCard, {
+            t, ctx, brand, refreshSignal: usageTick,
+            onSignedIn: () => { refresh(); setUsageTick(v => v + 1) },
+            onAuthChange: handleAuthChange,
+            onRegionChange: selectRegion,
+          })
+        : null
+
+      // Signed out: do not read or show a catalog that the CLI would refuse.
+      if (codebuddyLocked) {
+        return h('div', { style: css.page },
+          h('h2', { style: css.h2 }, t(brand.titleKey)),
+          h('p', { style: css.intro }, t(brand.introKey)),
+          authCard,
+          h('div', { style: css.guide },
+            h('div', { style: css.guideText }, t('codebuddyModelsHint')),
+          ),
+          error !== undefined ? h('div', { style: css.err }, error) : null,
+        )
+      }
+
       /**
        * Red guidance for "no models", with the one action that can fix it.
        *
@@ -1204,12 +1421,11 @@ window.__ModuleLoader__.load({
       if (models === undefined) {
         return h('div', { style: css.page },
           h('h2', { style: css.h2 }, t(brand.titleKey)),
-          brand.kind === 'codebuddy'
-            ? h(CodeBuddyCard, {
-                t, ctx, brand, refreshSignal: usageTick,
-                onSignedIn: () => { void load(true); setUsageTick(v => v + 1) },
-              })
-            : null,
+          // Same leading shape as the loaded page: a differing child index
+          // remounts the account card and makes it snap back to the region the
+          // config still holds while the switch is in flight.
+          h('p', { style: css.intro }, t(brand.introKey)),
+          brand.kind === 'codebuddy' ? authCard : null,
           error === undefined
             ? h('div', { style: css.note }, t('loading'))
             : h('div', null,
@@ -1272,10 +1488,7 @@ window.__ModuleLoader__.load({
         h('h2', { style: css.h2 }, t(brand.titleKey)),
         h('p', { style: css.intro }, t(brand.introKey)),
         brand.kind === 'codebuddy'
-          ? h(CodeBuddyCard, {
-              t, ctx, brand, refreshSignal: usageTick,
-              onSignedIn: () => { void load(true); setUsageTick(v => v + 1) },
-            })
+          ? authCard
           : h(UsageCard, { t, brand, refreshSignal: usageTick }),
 
         // Search row: the field grows, the checkbox sits beside it.
