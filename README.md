@@ -9,7 +9,8 @@
   与 [`@qoder-ai/qoder-agent-sdk`](https://www.npmjs.com/package/@qoder-ai/qoder-agent-sdk)；
   CodeBuddy 用 [`@tencent-ai/agent-sdk`](https://www.npmjs.com/package/@tencent-ai/agent-sdk)。
 - **零凭据**：复用本机 CLI 登录态，不需要 API key。
-- **额度可见**：Qoder 显示套餐、已用百分比、剩余 credits、加量包与到期时间，与 Qoder 客户端同源。
+- **额度可见**：Qoder 显示套餐、已用百分比、剩余 credits、加量包与到期时间；CodeBuddy 通过其
+  计费接口显示积分余额与各积分包（与官方账号页同源）。
 - **三套设置页**：Qoder CN / Qoder 国际版 / CodeBuddy，各自独立的模型开关、上下文窗口与登录面板。
 
 ## 为什么需要它
@@ -62,7 +63,8 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 **设置 → Qoder CN**、**设置 → Qoder 国际版**、**设置 → CodeBuddy** 是三个独立入口：
 
 - **额度 / 登录卡片**：Qoder 显示套餐、已用百分比进度、套餐 / 加量包 / 组织资源包剩余量、到期时间，
-  以及官方用量与升级链接；CodeBuddy 显示登录区域、登录状态与账号（其 SDK 未提供额度接口）。
+  以及官方用量与升级链接；CodeBuddy 显示登录区域、账号、积分余额、已用百分比、各积分包与最近到期
+  （通过其账号页使用的计费接口读取）。
 - **模型清单**：来自账号实时目录，逐个启用 / 关闭、指定上下文窗口；倍率取自上游报价。
 - **高级设置**：并发会话数、目录缓存、超时、默认思考档位、模型别名、分组名称等，可折叠。
 - **CLI 分组**：Qoder 页面有一键配置 / 重新登录 / 卸载 CLI（卸载前确认，保留登录凭证），附实时输出。

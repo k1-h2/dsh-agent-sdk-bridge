@@ -137,7 +137,11 @@ window.__ModuleLoader__.load({
       codebuddyNotLoggedIn: '未登录',
       codebuddySignedIn: '已登录',
       codebuddyAccountUnknown: '账号信息暂不可用',
-      codebuddyNoQuota: 'CodeBuddy SDK 未提供额度查询接口，此处仅显示登录账号。',
+      codebuddyNoQuota: '暂时无法读取额度。',
+      codebuddyQuotaFailed: '额度读取失败',
+      codebuddyQuotaTitle: '积分额度',
+      codebuddyQuotaPackages: '积分包',
+      codebuddyQuotaExpires: '最近到期',
       codebuddyConfirmLogout: '确定要退出当前区域的 CodeBuddy 登录吗？',
       advancedFields: {
         displayName: '分组名称',
@@ -254,7 +258,11 @@ window.__ModuleLoader__.load({
       codebuddyNotLoggedIn: 'Not signed in',
       codebuddySignedIn: 'Signed in',
       codebuddyAccountUnknown: 'Account details are unavailable',
-      codebuddyNoQuota: 'The CodeBuddy SDK exposes no quota endpoint, so this card shows the signed-in account only.',
+      codebuddyNoQuota: 'The quota is temporarily unavailable.',
+      codebuddyQuotaFailed: 'Could not read the quota',
+      codebuddyQuotaTitle: 'Credits',
+      codebuddyQuotaPackages: 'Credit packages',
+      codebuddyQuotaExpires: 'Earliest expiry',
       codebuddyConfirmLogout: 'Sign out of CodeBuddy for the selected region?',
       advancedFields: {
         displayName: 'Group name',
@@ -809,11 +817,21 @@ window.__ModuleLoader__.load({
         : [account.account.email, account.account.organization, account.account.subscriptionType]
             .filter(part => typeof part === 'string' && part.length > 0)
             .join(' · ')
+      const quota = account?.quota
+      const quotaPct = quota !== undefined && quota.total > 0
+        ? Math.max(0, Math.min(100, (quota.used / quota.total) * 100))
+        : undefined
+      const packages = Array.isArray(quota?.packages)
+        ? [...quota.packages].sort((a, b) => (a.end ?? Number.MAX_SAFE_INTEGER) - (b.end ?? Number.MAX_SAFE_INTEGER)).slice(0, 4)
+        : []
 
       return h('div', { style: css.usageCard },
         h('div', { style: css.usageHead },
           h('h3', { style: css.h3 }, t('codebuddyAuthTitle')),
           h('span', { style: { ...css.note, opacity: 0.7 } }, signedIn ? t('codebuddySignedIn') : t('codebuddyNotLoggedIn')),
+          signedIn
+            ? h('button', { style: { ...css.btn, marginLeft: 'auto' }, disabled: busy, onClick: () => void loadAccount(true) }, t('usageRefresh'))
+            : null,
         ),
         h('div', { style: css.note }, t('codebuddyAuthHint')),
         h('div', { style: css.usageLine },
@@ -840,7 +858,32 @@ window.__ModuleLoader__.load({
           h('span', { style: css.usageLabel }, t('usageAccount')),
           h('span', { style: css.usageValue }, accountText),
         ),
-        h('div', { style: css.note }, t('codebuddyNoQuota')),
+        quota === undefined
+          ? (account?.quotaError !== undefined
+              ? h('div', { style: css.err }, `${t('codebuddyQuotaFailed')}：${account.quotaError}`)
+              : signedIn ? h('div', { style: css.note }, t('codebuddyNoQuota')) : null)
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              h('div', { style: css.usageLine },
+                h('span', { style: css.usageLabel }, t('codebuddyQuotaTitle')),
+                h('span', { style: css.usageValue },
+                  `${t('usageRemaining')} ${creditsOf(quota.remaining)} ${t('usageOf')} ${creditsOf(quota.total)} ${t('usageCredits')}`),
+                quotaPct === undefined ? null : h('span', { style: css.usagePct }, `${quotaPct.toFixed(1)}%`),
+              ),
+              quotaPct === undefined ? null : h('div', { style: css.progressOuter },
+                h('div', { style: { ...css.progressInner, width: `${quotaPct}%` } }),
+              ),
+              packages.length === 0 ? null : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                h('div', { style: css.note }, t('codebuddyQuotaPackages')),
+                packages.map((pkg, index) => h('div', { key: `${pkg.name}-${index}`, style: css.usageLine },
+                  h('span', { style: { ...css.usageLabel, minWidth: '160px' } }, pkg.name || '—'),
+                  h('span', null, `${creditsOf(pkg.used)} / ${creditsOf(pkg.total)}`),
+                  pkg.end === undefined ? null : h('span', { style: { opacity: 0.55 } }, dateLabel(pkg.end)),
+                )),
+              ),
+              quota.cycleEnd === undefined ? null : h('div', { style: css.usageFoot },
+                h('span', null, `${t('codebuddyQuotaExpires')} ${dateLabel(quota.cycleEnd)}`),
+              ),
+            ),
         typeof auth?.url === 'string' && running
           ? h('div', { style: css.usageLine },
               h('a', { href: auth.url, target: '_blank', rel: 'noreferrer', style: css.link }, t('codebuddyOpenUrl')),
@@ -1538,7 +1581,7 @@ window.__ModuleLoader__.load({
     exports.name = 'dsh-agent-sdk-bridge'
     exports.__test = {
       windowLabel, priceSuffix, ADVANCED, BRANDS, zh, en,
-      SettingsPage, BundleSettings, UsageCard, QuotaLine, creditsOf, neverExpires,
+      SettingsPage, BundleSettings, UsageCard, CodeBuddyCard, QuotaLine, creditsOf, neverExpires,
       readCache, writeCache,
     }
     return module.exports

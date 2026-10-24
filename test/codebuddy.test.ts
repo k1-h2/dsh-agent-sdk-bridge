@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import { codeBuddyEnvironment, isCodeBuddyRegion } from '../src/brand.ts'
 import { resolveCodeBuddyModelId } from '../src/codebuddy-adapter.ts'
-import { toCodeBuddyModel } from '../src/codebuddy.ts'
+import { fetchCodeBuddyQuota, parseCodeBuddyQuota, toCodeBuddyModel } from '../src/codebuddy.ts'
 
 describe('CodeBuddy model mapping', () => {
   it('reads windows, vision, reasoning and the quoted credit multiplier', () => {
@@ -75,5 +75,78 @@ describe('CodeBuddy login regions', () => {
     for (const value of ['ioa', 'cloudhosted', 'selfhosted', 'internal', 'external', undefined]) {
       expect(isCodeBuddyRegion(value)).toBe(false)
     }
+  })
+})
+
+describe('CodeBuddy quota response', () => {
+  const payload = {
+    code: 0,
+    data: {
+      Response: {
+        Data: {
+          // Stale period figure; the parser must ignore it.
+          TotalDosage: 999,
+          Accounts: [
+            {
+              Status: 0,
+              PackageName: '个人体验版',
+              CycleEndTime: '2099-01-01 00:00:00',
+              CycleCapacitySize: 100,
+              CycleCapacityRemain: 60,
+              CycleCapacitySizePrecise: '100',
+              CycleCapacityRemainPrecise: '60.5',
+            },
+            {
+              Status: 1,
+              PackageName: '已失效',
+              CycleCapacitySizePrecise: '500',
+              CycleCapacityRemainPrecise: '500',
+            },
+            { Status: 0, CycleCapacitySizePrecise: '0' },
+          ],
+        },
+      },
+    },
+  }
+
+  it('sums live precise balances and keeps package expiry', () => {
+    const quota = parseCodeBuddyQuota(payload)
+    expect(quota.total).toBe(100)
+    expect(quota.remaining).toBe(60.5)
+    expect(quota.used).toBe(39.5)
+    expect(quota.packages).toHaveLength(1)
+    expect(quota.packages[0]).toMatchObject({ name: '个人体验版', total: 100, used: 39.5 })
+    expect(quota.cycleEnd).toBeGreaterThan(Date.now())
+  })
+
+  it('surfaces an upstream business error instead of reporting zero', () => {
+    expect(() => parseCodeBuddyQuota({
+      data: { Response: { Error: { Code: 'InvalidParameterValue', Message: 'bad product code' } } },
+    })).toThrow(/InvalidParameterValue/)
+  })
+
+  it('posts the account-page payload to the region host with the bearer token', async () => {
+    let seen: { url?: string, init?: RequestInit } = {}
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      seen = { url: String(url), init }
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }) as typeof fetch
+    const quota = await fetchCodeBuddyQuota('cn', 'token-1', fakeFetch)
+    expect(quota.remaining).toBe(60.5)
+    expect(seen.url).toBe('https://copilot.tencent.com/v2/billing/meter/get-user-resource')
+    const headers = seen.init?.headers as Record<string, string>
+    expect(headers.authorization).toBe('Bearer token-1')
+    expect(headers['x-domain']).toBe('copilot.tencent.com')
+    expect(JSON.parse(String(seen.init?.body))).toMatchObject({
+      PageNumber: 1,
+      PageSize: 200,
+      Status: [0, 3],
+      PackageEndTimeRangeEnd: '2099-12-31 23:59:59',
+    })
+  })
+
+  it('reports an expired login on 401 instead of echoing HTML', async () => {
+    const fakeFetch = (async () => new Response('<html>401 Authorization Required</html>', { status: 401 })) as typeof fetch
+    await expect(fetchCodeBuddyQuota('global', 'expired', fakeFetch)).rejects.toThrow(/登录已过期/)
   })
 })

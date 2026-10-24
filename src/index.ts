@@ -81,9 +81,12 @@ export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts'
 export {
   CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
   CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, codeBuddyColdStream,
-  toCodeBuddyModel,
+  fetchCodeBuddyQuota, parseCodeBuddyQuota, toCodeBuddyModel,
 } from './codebuddy.ts'
-export type { CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts'
+export type {
+  CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyQuota, CodeBuddyQuotaPackage,
+  CodeBuddyUsageSnapshot,
+} from './codebuddy.ts'
 export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './brand.ts'
 export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './brand.ts'
 export { loadCodeBuddySdk, loadSdk } from './sdk.ts'

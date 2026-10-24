@@ -44,10 +44,30 @@ export interface CodeBuddyAccount {
     organization?: string;
     subscriptionType?: string;
 }
+/** One credit package inside a CodeBuddy quota reading. */
+export interface CodeBuddyQuotaPackage {
+    name: string;
+    total: number;
+    used: number;
+    /** Epoch milliseconds, when the package expires. */
+    end?: number;
+}
+/** Account credits, read from CodeBuddy's billing endpoint. */
+export interface CodeBuddyQuota {
+    remaining: number;
+    total: number;
+    used: number;
+    /** Earliest still-valid package expiry, in epoch milliseconds. */
+    cycleEnd?: number;
+    packages: CodeBuddyQuotaPackage[];
+}
 /** The account reading served to the settings page. */
 export interface CodeBuddyUsageSnapshot {
     at: number;
     account?: CodeBuddyAccount;
+    quota?: CodeBuddyQuota;
+    /** Why the quota lookup failed, when the account itself was readable. */
+    quotaError?: string;
     error?: string;
 }
 /** Login progress for one region. */
@@ -103,6 +123,20 @@ export declare class CodeBuddyAccountReader {
 }
 /** Turn a raw SDK failure into a sentence the settings page can act on. */
 export declare function authErrorText(region: CodeBuddyRegion, error: unknown): string;
+/**
+ * The account's credits, read from CodeBuddy's billing endpoint.
+ *
+ * The SDK exposes no quota call, but the CLI's own account page uses
+ * `POST /v2/billing/meter/get-user-resource` on the same host. The response is
+ * a list of independently expiring credit packages; `CycleCapacity*Precise`
+ * is the live balance, while the top-level `TotalDosage` is a stale
+ * period-scoped figure and is deliberately ignored.
+ *
+ * @param payload - the endpoint's JSON answer.
+ */
+export declare function parseCodeBuddyQuota(payload: unknown): CodeBuddyQuota;
+/** Query the billing endpoint once. */
+export declare function fetchCodeBuddyQuota(region: CodeBuddyRegion, token: string, fetchImpl?: typeof fetch): Promise<CodeBuddyQuota>;
 /**
  * Browser login/logout per region.
  *

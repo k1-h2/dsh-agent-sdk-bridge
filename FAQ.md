@@ -17,9 +17,10 @@
 点「登录」并在浏览器完成授权；登录成功后卡片会显示账号，对话才可用。两个区域的账号与目录独立，
 切换区域需要用对应账号重新登录。
 
-**CodeBuddy 为什么没有额度卡片？** 它的 Agent SDK 只提供账号信息与逐轮 token 用量，没有 Qoder
-那样的额度查询接口（`getUsageInfo`）。插件不会自己拼一个近似值，因此卡片只显示登录账号，并注明
-这一点。
+**CodeBuddy 额度从哪来？** 官方 SDK 没有额度方法，插件用登录后的 bearer token 调用 CodeBuddy
+账号页同源的计费接口 `POST /v2/billing/meter/get-user-resource`，汇总各积分包的实时余额
+（`CycleCapacityRemainPrecise`），并显示最近到期时间。该接口未公开、可能随上游变更；读取失败时
+卡片会保留账号信息并显示原因，不影响对话。登录过期后重新登录即可；额度读取本身不会弹出浏览器。
 
 **CodeBuddy 能用企业域名 / IOA 登录吗？** 不能。插件只暴露 `global`（codebuddy.ai）与 `cn`
 （copilot.tencent.com）两种公共登录区域；SDK 里的 `ioa`、`cloudhosted`、`selfhosted` 需要企业

@@ -13,6 +13,9 @@
   模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；登录走
   `unstable_v2_authenticate`，`global`/`cn` 分别映射为 SDK 的 `external`/`internal`。
   企业 `ioa`/`cloudhosted`/`selfhosted` 环境不暴露。SDK 自带 CLI，因此没有安装脚本。
+- **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
+  `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
+  token 只缓存在内存，额度读取用一次静默 `authenticate` 取已有登录 token，不会拉起浏览器。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
 - **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` 是结构字段。宿主在

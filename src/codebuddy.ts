@@ -12,7 +12,7 @@
  * @module dsh-agent-sdk-bridge/codebuddy
  */
 
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { EMPTY_RESPONSE_CODE, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type {
@@ -69,11 +69,51 @@ export interface CodeBuddyAccount {
   subscriptionType?: string
 }
 
+/** One credit package inside a CodeBuddy quota reading. */
+export interface CodeBuddyQuotaPackage {
+  name: string
+  total: number
+  used: number
+  /** Epoch milliseconds, when the package expires. */
+  end?: number
+}
+
+/** Account credits, read from CodeBuddy's billing endpoint. */
+export interface CodeBuddyQuota {
+  remaining: number
+  total: number
+  used: number
+  /** Earliest still-valid package expiry, in epoch milliseconds. */
+  cycleEnd?: number
+  packages: CodeBuddyQuotaPackage[]
+}
+
 /** The account reading served to the settings page. */
 export interface CodeBuddyUsageSnapshot {
   at: number
   account?: CodeBuddyAccount
+  quota?: CodeBuddyQuota
+  /** Why the quota lookup failed, when the account itself was readable. */
+  quotaError?: string
   error?: string
+}
+
+/** The public billing hosts; both regions speak the same quota protocol. */
+const CODEBUDDY_ENDPOINTS: Record<CodeBuddyRegion, string> = {
+  global: 'https://www.codebuddy.ai',
+  cn: 'https://copilot.tencent.com',
+}
+const QUOTA_PATH = '/v2/billing/meter/get-user-resource'
+const QUOTA_RANGE_END = '2099-12-31 23:59:59'
+/** Cosmetic fingerprint headers the upstream checks; kept in step with the CLI. */
+const CLIENT_VERSION = '2.174.0'
+
+/** Tokens obtained from a successful login or a silent auth read, per region. */
+const bearerTokens = new Map<CodeBuddyRegion, string>()
+
+/** Remember a bearer token in memory only; it is never written to disk. */
+function rememberBearerToken(region: CodeBuddyRegion, token: string): void {
+  if (token.length > 0) bearerTokens.set(region, token)
 }
 
 /** Login progress for one region. */
@@ -251,7 +291,16 @@ export class CodeBuddyAccountReader {
       if (Object.keys(account).length === 0) {
         return { at, error: `${region === 'cn' ? 'CodeBuddy 国内版' : 'CodeBuddy 国际版'}尚未登录，请在页面顶部选择该区域并登录。` }
       }
-      return { at, account }
+      try {
+        const quota = await readQuotaWithToken(region)
+        return { at, account, quota }
+      } catch (quotaError) {
+        return {
+          at,
+          account,
+          quotaError: quotaError instanceof Error ? quotaError.message : String(quotaError),
+        }
+      }
     } catch (error) {
       return { at, error: authErrorText(region, error) }
     }
@@ -298,6 +347,195 @@ export function authErrorText(region: CodeBuddyRegion, error: unknown): string {
   return detail
 }
 
+/**
+ * The account's credits, read from CodeBuddy's billing endpoint.
+ *
+ * The SDK exposes no quota call, but the CLI's own account page uses
+ * `POST /v2/billing/meter/get-user-resource` on the same host. The response is
+ * a list of independently expiring credit packages; `CycleCapacity*Precise`
+ * is the live balance, while the top-level `TotalDosage` is a stale
+ * period-scoped figure and is deliberately ignored.
+ *
+ * @param payload - the endpoint's JSON answer.
+ */
+export function parseCodeBuddyQuota(payload: unknown): CodeBuddyQuota {
+  const data = (payload as { data?: unknown } | null)?.data as Record<string, unknown> | undefined
+  if (data === null || data === undefined || typeof data !== 'object') throw new Error('额度响应缺少 data')
+  const response = data.Response as Record<string, unknown> | undefined
+  const error = response?.Error as { Code?: unknown, Message?: unknown } | undefined
+  if (error?.Code !== undefined && error.Code !== 0 && error.Code !== '0') {
+    throw new Error(`${String(error.Code)}: ${String(error.Message ?? '')}`)
+  }
+  const source = (response?.Data as Record<string, unknown> | undefined)?.Accounts
+    ?? response?.Accounts
+    ?? (data.Data as Record<string, unknown> | undefined)?.Accounts
+    ?? data.Accounts
+  if (!Array.isArray(source)) throw new Error('额度响应缺少 Accounts')
+
+  const now = Date.now()
+  let total = 0
+  let remaining = 0
+  let cycleEnd: number | undefined
+  const packages: CodeBuddyQuotaPackage[] = []
+  for (const entry of source as Record<string, unknown>[]) {
+    if (entry === null || typeof entry !== 'object') continue
+    if (Number(entry.Status) !== 0) continue
+    const packageTotal = cycleCapacity(entry, 'CycleCapacitySize')
+    if (packageTotal <= 0) continue
+    const packageRemaining = Math.max(0, cycleCapacity(entry, 'CycleCapacityRemain'))
+    total += packageTotal
+    remaining += packageRemaining
+    const end = parseLocalTime(entry.CycleEndTime)
+    if (packageRemaining > 0 || (end !== undefined && end > now)) {
+      packages.push({
+        name: String(entry.PackageName ?? ''),
+        total: packageTotal,
+        used: Math.max(0, packageTotal - packageRemaining),
+        ...end === undefined ? {} : { end },
+      })
+    }
+    if (end !== undefined && end > now && packageRemaining > 0) {
+      cycleEnd = cycleEnd === undefined ? end : Math.min(cycleEnd, end)
+    }
+  }
+  return {
+    remaining,
+    total,
+    used: Math.max(0, total - remaining),
+    ...cycleEnd === undefined ? {} : { cycleEnd },
+    packages,
+  }
+}
+
+function numeric(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function cycleCapacity(entry: Record<string, unknown>, key: string): number {
+  return numeric(entry[`${key}Precise`]) ?? numeric(entry[key]) ?? 0
+}
+
+function parseLocalTime(value: unknown): number | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  const parsed = Date.parse(value.trim().replace(' ', 'T'))
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function formatLocalTime(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+    + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+/**
+ * A bearer token for the region, from a recent login or a silent SDK read.
+ *
+ * `authenticate` returns the CLI's existing account token without opening a
+ * browser when the region is already signed in, so this stays a read. When it
+ * is not signed in the call times out; callers treat that as "log in first".
+ */
+async function readBearerToken(region: CodeBuddyRegion): Promise<string> {
+  const cached = bearerTokens.get(region)
+  if (cached !== undefined) return cached
+  const sdk = await loadCodeBuddySdk()
+  const result = await withTimeout(sdk.unstable_v2_authenticate({
+    environment: codeBuddyEnvironment(region),
+    timeout: 3000,
+    onAuthUrl: () => {
+      // A quota read must never pop a browser; the page owns login.
+    },
+  }), 6000)
+  rememberBearerToken(region, result.userinfo.token)
+  return result.userinfo.token
+}
+
+/** Query the billing endpoint once. */
+export async function fetchCodeBuddyQuota(
+  region: CodeBuddyRegion,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CodeBuddyQuota> {
+  const endpoint = CODEBUDDY_ENDPOINTS[region]
+  const host = new URL(endpoint).host
+  const body = {
+    PageNumber: 1,
+    PageSize: 200,
+    Status: [0, 3],
+    PackageEndTimeRangeBegin: formatLocalTime(new Date()),
+    PackageEndTimeRangeEnd: QUOTA_RANGE_END,
+  }
+  const response = await fetchImpl(`${endpoint}${QUOTA_PATH}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'x-requested-with': 'XMLHttpRequest',
+      'x-stainless-arch': process.arch === 'arm64' ? 'arm64' : 'x64',
+      'x-stainless-lang': 'js',
+      'x-stainless-os': process.platform === 'darwin' ? 'MacOS' : process.platform === 'win32' ? 'Windows' : 'Linux',
+      'x-stainless-package-version': '6.25.0',
+      'x-stainless-retry-count': '0',
+      'x-stainless-runtime': 'node',
+      'x-stainless-runtime-version': process.version,
+      'x-conversation-id': randomUUID(),
+      'x-conversation-request-id': randomBytes(16).toString('hex'),
+      'x-conversation-message-id': randomUUID().replace(/-/g, ''),
+      'x-request-id': randomUUID().replace(/-/g, ''),
+      'x-agent-intent': 'craft',
+      'x-agent-purpose': 'conversation',
+      'x-ide-type': 'CLI',
+      'x-ide-name': 'CLI',
+      'x-ide-version': CLIENT_VERSION,
+      'user-agent': `CLI/${CLIENT_VERSION} CodeBuddy/${CLIENT_VERSION}`,
+      'x-private-data': 'false',
+      'x-codebuddy-request': '1',
+      'x-product': 'SaaS',
+      'x-domain': host,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const text = await response.text()
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('CodeBuddy 登录已过期，请重新登录')
+    }
+    const detail = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)
+    throw new Error(`CodeBuddy 额度接口返回 HTTP ${response.status}${detail === '' ? '' : `：${detail}`}`)
+  }
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    throw new Error('CodeBuddy 额度接口返回了非 JSON 内容')
+  }
+  return parseCodeBuddyQuota(payload)
+}
+
+/** Read quota, retrying once with a fresh token after an auth failure. */
+async function readQuotaWithToken(region: CodeBuddyRegion): Promise<CodeBuddyQuota> {
+  const token = await readBearerToken(region).catch((error: unknown) => {
+    throw new Error(authErrorText(region, error))
+  })
+  try {
+    return await fetchCodeBuddyQuota(region, token)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    if (!/401|登录已过期|unauthor|token/i.test(detail)) throw error
+    bearerTokens.delete(region)
+    const renewed = await readBearerToken(region).catch((renewError: unknown) => {
+      throw new Error(authErrorText(region, renewError))
+    })
+    return await fetchCodeBuddyQuota(region, renewed)
+  }
+}
+
 interface AuthRun {
   status: CodeBuddyAuthStatus
 }
@@ -338,6 +576,7 @@ export class CodeBuddyAuth {
         CODEBUDDY_FETCH_TIMEOUT_MS,
       )
       this.runs.delete(region)
+      bearerTokens.delete(region)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -366,6 +605,7 @@ export class CodeBuddyAuth {
         userName: result.userinfo.userName,
         userNickname: result.userinfo.userNickname,
       }
+      rememberBearerToken(region, result.userinfo.token)
       onFinish?.(true)
     } catch (error) {
       status.running = false

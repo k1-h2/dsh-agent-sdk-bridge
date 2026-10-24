@@ -75,7 +75,9 @@ MIT 不要求衍生作品沿用同一许可（无 copyleft 条款），但本项
     自带 CodeBuddy CLI，因此没有安装脚本；登录用 SDK 的 `unstable_v2_authenticate`，只暴露公共的
     国际版（`external`）与国内版（`internal`）两种区域，企业 `ioa` / `cloudhosted` / `selfhosted`
     不在范围内。模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；
-    其 SDK 没有额度查询接口，设置页因此只显示账号，不伪造额度。
+    额度走 CodeBuddy 账号页使用的计费接口 `POST /v2/billing/meter/get-user-resource`，按积分包
+    汇总实时余额（`CycleCapacity*Precise`），不使用口径过时的 `TotalDosage`。该接口未公开，
+    随上游变更可能失效；token 只保存在内存中，不写入配置或磁盘。
 
 ## 上游的原始文件
 
