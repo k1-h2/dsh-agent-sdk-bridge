@@ -1,0 +1,18 @@
+# Normalize line endings in the repository so a Windows checkout cannot leak
+# CRLF into the published package or into lib/.
+* text=auto eol=lf
+
+# Binary assets must never be text-normalized.
+*.png binary
+*.jpg binary
+*.ico binary
+*.tgz binary
+
+# Generated declaration files are build output; keep them out of diffs noise.
+lib/** linguist-generated=true
+
+# cmd.exe cannot parse a batch file whose newlines are LF-only, so the setup
+# helper must come out of a checkout with CRLF intact — the blanket rule above
+# would otherwise rewrite it. Later rules win.
+*.bat text eol=crlf
+*.cmd text eol=crlf

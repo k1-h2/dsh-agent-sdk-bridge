@@ -1,0 +1,15 @@
+packages:
+  - .
+
+nodeLinker: hoisted
+
+# Each Qoder SDK's postinstall downloads its CLI worker runtime. It is
+# optional — the SDK falls back to the system CLI on PATH — but allowing it
+# here makes a dev install behave exactly like a user's `dsh plugin add`,
+# which is the configuration worth testing against.
+allowBuilds:
+  '@qodercn-ai/qodercn-agent-sdk': true
+  '@qoder-ai/qoder-agent-sdk': true
+
+minimumReleaseAgeExclude:
+  - '@qoder-ai/qoder-agent-sdk@1.0.56'

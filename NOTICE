@@ -1,0 +1,88 @@
+# Notice / 致谢与出处
+
+本仓库以 [MIT](./LICENSE) 许可发布。
+
+## 上游项目
+
+本插件是 **[JiamingZang/dsh-llm-qodersdk](https://github.com/JiamingZang/dsh-llm-qodersdk)**
+（npm 包名 `@jiamingzang/dsh-llm-qoder`，MIT，版本 0.2.0）的衍生作品。
+
+上游同样以 MIT 发布。MIT 允许使用、复制、修改、合并、发布、分发、再许可和销售副本，
+唯一条件是**保留版权声明与许可声明**。本仓库据此：
+
+- 完整保留上游 MIT 许可原文（见 `LICENSE.original`，即上游 `LICENSE` 的逐字副本）；
+- 在上方署名上游项目与作者；
+- 以 MIT 继续发布本衍生作品。
+
+MIT 不要求衍生作品沿用同一许可（无 copyleft 条款），但本项目选择继续使用 MIT，
+以便与上游及 DSH 生态保持一致。
+
+## 本仓库相对上游的改动
+
+1. **同时接入两个官方 SDK**：上游只依赖 `@qoder-ai/qoder-agent-sdk`（国际版），其编译期品牌
+   硬编码为 `global`（`cliCommands: qodercli/qoder`、配置目录 `.qoder`、
+   `QODER_PERSONAL_ACCESS_TOKEN`），在只装了 `qoderclicn` 的机器上无法工作。本项目最初改用
+   官方 **CN** 包 `@qodercn-ai/qodercn-agent-sdk`（`brand: cn`、`cliCommands: qoderclicn/qodercn`、
+   配置目录 `.qoder-cn`、`QODERCN_*`）；v1.1.0 起把国际版包也装了回来，作为**另一个独立
+   adapter** 与 CN 并行工作，而不是二选一。品牌差异集中在 `src/brand.ts`，其余代码按 brand
+   参数化。两个包的公开 API 一致，故共用同一套会话、目录与额度代码。
+2. **两个 provider id**：注册 `qoder-cn` 与 `qoder-intl` 两条路由（上游为 `qoder`，另有
+   `qoder-byok` 承载账号自己添加的自带 Key 模型）。本项目用不到那批自定义模型——DSH 只走订阅
+   自己的目录——因此在目录层丢弃上游标记为 `user`/`custom` 的条目，每个版本只有一个分组。
+   id 与上游不同，两者可在同一 profile 中共存而不冲突。
+3. **可配置设置面**：新增 `src/config.ts`，声明带中文说明的配置项（CN 与国际版各一套模型开关 /
+   窗口 / 别名）。设置页由本插件
+   自带的 `client.js` 注册为**独立顶层导航项**（`settings.section`）——DSH 的自动配置页渲染在
+   「内置插件」分区内部，要独立入口就得自带浏览器半侧。两个前提缺一不可：每个字段必须
+   `.volatile()`（`volatileForm` 只保留 volatile 节点，否则整个命名空间不会下发到客户端），
+   且每个字段必须在**使用处**读取（见第 8 条）。上游仅暴露 `maxSessions` 与
+   `modelCacheTtlSeconds` 两项且未提供界面。
+4. **上下文窗口按模型可选**：新增 `modelContextWindows`（Qoder 模型 id → token 数）。设置页
+   为每个模型提供下拉，列出上游为该模型声明的全部窗口（如 200K / 400K / 1M），默认档跟随
+   上游声明的**会话窗口**；上游固定使用 `defaultContextWindow`（通常 200K）。注意
+   `maxInputTokens` 不是替代品——它是单次请求的上限，常低于会话窗口。选大窗口会推迟
+   harness 的自动压缩阈值，取舍写在 `pickContextWindow` 的注释里。
+5. **模型过滤与别名**：新增 `disabledModels` 拒绝清单与 `modelAliases` 别名映射。用拒绝清单
+   而非允许清单，是因为账号目录会变——允许清单会把上游后来新增的模型静默藏掉。
+6. **超时可调**：`toolResultTimeoutSeconds`、`catalogFetchTimeoutSeconds`、
+   `abortGraceSeconds`、`coldMaxTurns` 由硬编码常量改为配置项。
+7. **删除上游死代码**：上游 `render.ts` 导出了 `renderIdentityAppend`（一段指示内层模型否认
+   自身来源、自称宿主 Agent 的身份提示），但全仓库无调用点，构建产物中亦不存在（被
+   tree-shaking 移除）。本项目一度将其接入配置项 `identityOverride`，现已连同该配置项一并删除：
+   让助手否认自己的来源并不是本插件该做的产品决策，隐藏身份本身也没有必要。
+8. **设置改动即时生效**：DSH 对「只改 volatile 字段」的写入**不重启插件**，而是把新值就地写进
+   运行中插件**已经持有的那个** `Volatile` 引用（`cordis-plugin-loader` 的 `Entry.update` →
+   `_commitVolatile`），`apply()` 不会再被调用。上游和本仓库 0.6.0 之前都在挂载时把配置抄进
+   自己的字段，于是设置页写成功、`cordis.patch.yml` 落盘也正确，插件却一直按挂载时的值作答
+   （表现为「点了没反应」）。本仓库改为全部按需读取（`src/live.ts` 的 `Live<T>` 与
+   `liveConfig()`），只对决定选择器分组名的 `displayName` 监听 `loader/volatile-update` 就地重发。
+
+9. **一键配置 CLI（仅 Windows）**：随包发布 `scripts/setup-qoderclicn.bat` 与
+   `scripts/setup-qodercli.bat`——检查 node/npm、缺就 `npm install -g` 对应包、未登录就
+   `login`、最后校验版本 / 登录态 / 凭证目录 / 模型数量。设置页底部的分组通过
+   `POST /api/llm-qoder-cn/setup`（body 带 `brand`）让宿主
+   进程代跑它并实时回传输出（浏览器无法启动本地进程）：面板只跟着这一次运行走，脚本结束 1 秒就
+   自动收起，需要再看用「查看输出」展开；模型列表为空时页面直接红字引导点一键配置。mode 只有两
+   个键的白名单，各自映射到一个字面 flag——`configure` → `--gui`（装 + 登录 + 校验），`login` →
+   `--login`（只重跑浏览器授权，用于换账号；`--check` 留给手动体检，界面不暴露）；脚本路径来自包
+   自身布局，同一时刻只允许一个运行，插件卸载时杀掉未结束的子进程。批次文件有两个硬约束：
+   必须 CRLF（`cmd.exe` 解析不了 LF-only，故 `.gitattributes` 为 `*.bat` 单独设了
+   `eol=crlf`），且必须纯 ASCII——实测在**没有控制台**的方式下调用（`windowsHide` + 管道，
+   正是插件的调用方式）时，`cmd.exe` 会在含多字节字符的行上算错文件位置，把半行当命令执行；
+   同一份文件在真实控制台里则正常。上游与本仓库此前都不涉及本地进程执行。
+
+## 上游的原始文件
+
+上游 `LICENSE` 的逐字副本保留在 [`LICENSE.original`](./LICENSE.original)，以满足
+MIT 的版权声明保留要求。
+
+## 商标与免责声明
+
+Qoder、Qoder CN、DeepSeek、DeepSeek Harness 等名称与商标归各自权利人所有，
+此处仅作兼容性描述之用。本项目与 Qoder（通义云启）、DeepSeek 官方均无关联，
+是非官方社区适配器。
+
+**使用风险自负。** 本插件通过官方 Agent SDK 复用本机 `qoderclicn` / `qodercli`
+登录态，不逆向协议、不伪造客户端身份、不自动化领取签到积分；额度只读展示，不发起任何
+兑换或领取请求。但"以订阅额度驱动第三方宿主"是否符合你的 Qoder 服务条款，由你自行
+判断。详见 README 的「合规与风险」一节。

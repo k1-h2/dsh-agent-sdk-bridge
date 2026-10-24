@@ -1,0 +1,96 @@
+{
+  "name": "dsh-qoder-link",
+  "displayName": "Qoder (CN + International)",
+  "description": "DeepSeek Harness LLM adapter for Qoder CN and Qoder International subscriptions, built on the official Qoder Agent SDKs. Reuses the local qoderclicn / qodercli login, shows the account quota the Qoder clients display, and exposes a fully configurable settings page per edition (per-model context window, session pool, timeouts, model deny list, aliases).",
+  "version": "1.1.0",
+  "type": "module",
+  "license": "MIT",
+  "author": "k1-h2",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "qoder",
+    "qoder-cn",
+    "qoder-international",
+    "quota",
+    "model-provider",
+    "agent-sdk"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/k1-h2/dsh-agent-sdk-bridge.git"
+  },
+  "homepage": "https://github.com/k1-h2/dsh-agent-sdk-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/k1-h2/dsh-agent-sdk-bridge/issues"
+  },
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "FAQ.md",
+    "DEVELOPMENT.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/cosmokit": "*",
+    "@deepseek-ai/dsh-attachment": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "dependencies": {
+    "@qoder-ai/qoder-agent-sdk": "^1.0.56",
+    "@qodercn-ai/qodercn-agent-sdk": "^1.0.51",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-attachment": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "@types/node": "^22.0.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsdown",
+    "build:clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build:clean && npm test"
+  }
+}

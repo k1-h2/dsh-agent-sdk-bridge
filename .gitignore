@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+*.tgz
+
+# Scratch files used while developing/verifying; never part of the project.
+_verify*.mjs
+_e2e.mjs
+_restart.ps1
+_restart.log
