@@ -8,7 +8,7 @@
  * out: which package to import, where the CLI can live, and which config fields
  * carry the user's choices for that brand.
  *
- * @module dsh-qoder-link/brand
+ * @module dsh-agent-sdk-bridge/brand
  */
 /** A Qoder subscription edition. */
 export type QoderBrand = 'cn' | 'global';

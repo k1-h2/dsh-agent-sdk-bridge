@@ -28,7 +28,7 @@
  * the form. The `/setup` pair is not a config write: it starts a bundled script
  * and reports its output.
  *
- * @module dsh-qoder-link/api
+ * @module dsh-agent-sdk-bridge/api
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'

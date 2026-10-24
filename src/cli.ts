@@ -22,7 +22,7 @@
  * lookup returns nothing and the SDK keeps its default transport — worse for
  * images, but not this module's place to fail a session over.
  *
- * @module dsh-qoder-link/cli
+ * @module dsh-agent-sdk-bridge/cli
  */
 
 import { existsSync, readdirSync } from 'node:fs'

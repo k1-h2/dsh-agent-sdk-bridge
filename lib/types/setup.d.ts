@@ -14,7 +14,7 @@
  * package's own layout. The helper is idempotent, so a second press re-checks
  * rather than reinstalling.
  *
- * @module dsh-qoder-link/setup
+ * @module dsh-agent-sdk-bridge/setup
  */
 import type { QoderBrand } from './brand.ts';
 /** File name of the CN helper, shipped under this package's `scripts/` directory. */

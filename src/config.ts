@@ -12,7 +12,7 @@
  * groups below are arranged the way a user reads them (identity → capacity →
  * context → timeouts → models → aliases).
  *
- * @module dsh-qoder-link/config
+ * @module dsh-agent-sdk-bridge/config
  */
 
 import { isVolatile } from '@deepseek-ai/cosmokit'

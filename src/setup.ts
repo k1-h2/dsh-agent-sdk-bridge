@@ -14,7 +14,7 @@
  * package's own layout. The helper is idempotent, so a second press re-checks
  * rather than reinstalling.
  *
- * @module dsh-qoder-link/setup
+ * @module dsh-agent-sdk-bridge/setup
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'

@@ -12,7 +12,7 @@
  * every render. Failures are returned, not thrown: a page that cannot read the
  * quota must still render the rest of its settings.
  *
- * @module dsh-qoder-link/usage
+ * @module dsh-agent-sdk-bridge/usage
  */
 
 import type { AccountInfo, UsageInfo } from '@qodercn-ai/qodercn-agent-sdk'

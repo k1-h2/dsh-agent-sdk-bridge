@@ -12,7 +12,7 @@
  * every call site here is shared, and the only thing that changes is which
  * process the protocol is spoken to.
  *
- * @module dsh-qoder-link/sdk
+ * @module dsh-agent-sdk-bridge/sdk
  */
 
 import * as cnSdk from '@qodercn-ai/qodercn-agent-sdk'

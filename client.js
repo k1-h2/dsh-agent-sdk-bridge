@@ -1,5 +1,5 @@
 /**
- * dsh-qoder-link — browser half.
+ * dsh-agent-sdk-bridge — browser half.
  *
  * Contributes one top-level settings section per enabled edition (`qoder-cn`,
  * `qoder-intl`), each showing the account quota and then the model list: every
@@ -27,7 +27,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-qoder-link',
+  id: 'dsh-agent-sdk-bridge',
   factory: require => {
     const module = { exports: {} }
     const exports = module.exports
@@ -364,7 +364,7 @@ window.__ModuleLoader__.load({
      * different cards. `localStorage` keeps the snapshot across a page reload;
      * the in-memory map covers a deployment where storage is unavailable.
      */
-    const CACHE_PREFIX = 'dsh-qoder-link/cache/v1'
+    const CACHE_PREFIX = 'dsh-agent-sdk-bridge/cache/v1'
     const cacheMemory = new Map()
 
     function cacheKey(brand, kind) {
@@ -1244,7 +1244,7 @@ window.__ModuleLoader__.load({
       // That page exists whether or not either edition is currently shown.
       ctx.effect(() => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
         name: 'plugins.bundle.config',
-        key: 'dsh-qoder-link',
+        key: 'dsh-agent-sdk-bridge',
         locale: NS,
       }, props => h(BundleSettings, { ...props, ctx, t }))), 'llm-qoder-cn: bundle options')
 
@@ -1288,7 +1288,7 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.inject = inject
-    exports.name = 'dsh-qoder-link'
+    exports.name = 'dsh-agent-sdk-bridge'
     exports.__test = {
       windowLabel, priceSuffix, ADVANCED, BRANDS, zh, en,
       SettingsPage, BundleSettings, UsageCard, QuotaLine, creditsOf, neverExpires,

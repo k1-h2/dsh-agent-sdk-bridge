@@ -1,13 +1,15 @@
 {
-  "name": "dsh-qoder-link",
-  "displayName": "Qoder (CN + International)",
-  "description": "DeepSeek Harness LLM adapter for Qoder CN and Qoder International subscriptions, built on the official Qoder Agent SDKs. Reuses the local qoderclicn / qodercli login, shows the account quota the Qoder clients display, and exposes a fully configurable settings page per edition (per-model context window, session pool, timeouts, model deny list, aliases).",
+  "name": "dsh-agent-sdk-bridge",
+  "displayName": "Agent SDK Bridge",
+  "description": "DeepSeek Harness LLM adapter bridge. It currently serves Qoder CN and Qoder International subscriptions through their official Agent SDKs: it reuses the local qoderclicn / qodercli login, shows the account quota the Qoder clients display, and exposes a fully configurable settings page per edition.",
   "version": "1.1.0",
   "type": "module",
   "license": "MIT",
   "author": "k1-h2",
   "keywords": [
     "dsh-plugin",
+    "dsh-agent-sdk-bridge",
+    "agent-sdk-bridge",
     "deepseek-harness",
     "deepseek",
     "qoder",

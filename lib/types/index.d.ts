@@ -23,7 +23,7 @@
  * its `replace` handle when the display name changes.
  * See `src/live.ts` for the mechanism.
  *
- * @module dsh-qoder-link
+ * @module dsh-agent-sdk-bridge
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { ServerResponse, IncomingMessage } from 'node:http';

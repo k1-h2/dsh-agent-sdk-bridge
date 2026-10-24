@@ -20,7 +20,7 @@
  * A constant offset in that fit (qodercli's own prompt, skills and tool
  * definitions, ~127 tokens) is deliberately not modelled here: it belongs to the
  * CLI's session, not to the text being priced.
- * @module dsh-qoder-link/tokens
+ * @module dsh-agent-sdk-bridge/tokens
  */
 
 /** Characters per token for wide (CJK) text, measured. */

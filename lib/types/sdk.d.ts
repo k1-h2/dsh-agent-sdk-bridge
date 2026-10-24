@@ -12,7 +12,7 @@
  * every call site here is shared, and the only thing that changes is which
  * process the protocol is spoken to.
  *
- * @module dsh-qoder-link/sdk
+ * @module dsh-agent-sdk-bridge/sdk
  */
 import type * as QoderSdk from '@qodercn-ai/qodercn-agent-sdk';
 import type { QoderBrand } from './brand.ts';

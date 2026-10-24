@@ -1,10 +1,10 @@
-# dsh-qoder-link
-
-> 仓库 `dsh-agent-sdk-bridge` 是原 `dsh-qoder-link` 的后续维护地址，后续会在同一仓库接入更多
-> Agent SDK；当前版本仍提供 Qoder CN / Qoder 国际版插件。
+# dsh-agent-sdk-bridge
 
 把 **Qoder CN** 与 **Qoder 国际版**订阅接入
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 LLM 适配器插件。
+
+> 本仓库是 Qoder 插件的后续维护地址，后续会在同一仓库接入更多 Agent SDK；当前版本提供
+> Qoder CN / Qoder 国际版。
 
 - **官方 SDK**：CN 用 [`@qodercn-ai/qodercn-agent-sdk`](https://www.npmjs.com/package/@qodercn-ai/qodercn-agent-sdk)，
   国际版用 [`@qoder-ai/qoder-agent-sdk`](https://www.npmjs.com/package/@qoder-ai/qoder-agent-sdk)。
@@ -24,7 +24,8 @@ Qoder 两家发行版各有一个官方 SDK，品牌在编译期写死，一个�
 
 ### 1. 装插件
 
-**插件 → 添加插件**，填 `dsh-qoder-link` 并安装；也可用 `github:k1-h2/dsh-agent-sdk-bridge` 或本地目录。
+**插件 → 添加插件**，填 `github:k1-h2/dsh-agent-sdk-bridge` 并安装；也可用本地目录。
+`dsh-agent-sdk-bridge` 尚未发布到 npm，npm 上同代码的包名目前仍是 `dsh-qoder-link`（1.1.0）。
 
 若提示**「需要允许安装脚本」**（SDK 下载自己的 worker runtime），点「允许这些脚本并重试」即可；
 不授权也能用，SDK 会回退到 PATH 上的系统 CLI。装完按提示**重启 DSH**。
@@ -65,7 +66,7 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 每个版本只注册一条 provider 路由（`qoder-cn` / `qoder-intl`），只服务订阅自带的模型；BYOK
 自定义模型会被过滤掉。
 
-两个版本是否出现，在**插件 → dsh-qoder-link → 启用的版本**里控制。关闭后对应的设置页、模型
+两个版本是否出现，在**插件 → Agent SDK Bridge → 启用的版本**里控制。关闭后对应的设置页、模型
 列表、选择器分组与 provider 路由一起移除；已保存的模型选择保留，重新打开即可恢复。
 
 ## 用 YAML 配置
@@ -74,7 +75,7 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 
 ```yaml
 - id: llm-qoder-cn
-  name: dsh-qoder-link
+  name: dsh-agent-sdk-bridge
   config:
     cnEnabled: true
     intlEnabled: false                # 关闭国际版：设置页与模型分组一起移除
