@@ -25,7 +25,7 @@ Qoder 两家发行版各有一个官方 SDK，品牌在编译期写死，一个�
 ### 1. 装插件
 
 **插件 → 添加插件**，填 `github:k1-h2/dsh-agent-sdk-bridge` 并安装；也可用本地目录。
-`dsh-agent-sdk-bridge` 尚未发布到 npm，npm 上同代码的包名目前仍是 `dsh-qoder-link`（1.1.0）。
+`dsh-agent-sdk-bridge` 尚未发布到 npm，请使用上面的 GitHub 地址（或本地目录）安装。
 
 若提示**「需要允许安装脚本」**（SDK 下载自己的 worker runtime），点「允许这些脚本并重试」即可；
 不授权也能用，SDK 会回退到 PATH 上的系统 CLI。装完按提示**重启 DSH**。
