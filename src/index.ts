@@ -29,10 +29,12 @@ import type { ServerResponse, IncomingMessage } from 'node:http'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER } from './adapter.ts'
 import { CodeBuddyAdapter, CODEBUDDY_PROVIDER } from './codebuddy-adapter.ts'
+import { MinimaxAdapter, MINIMAX_PROVIDER } from './minimax-adapter.ts'
 import { API_PREFIX, handleApi } from './api.ts'
 import type { BrandId } from './brand.ts'
 import { BRANDS } from './brand.ts'
 import { stopSetup } from './setup.ts'
+import { stopMinimaxSetup } from './minimax-cli.ts'
 import type { LiveConfig, ParsedConfig } from './config.ts'
 import { Config as ConfigSchema, liveConfig } from './config.ts'
 
@@ -77,6 +79,20 @@ declare module '@deepseek-ai/cordis' {
 export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './adapter.ts'
 export type { ImageRequestReader, QoderAdapterOptions } from './adapter.ts'
 export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './codebuddy-adapter.ts'
+export { MinimaxAdapter, MINIMAX_PROVIDER, resolveMinimaxModelId } from './minimax-adapter.ts'
+export {
+  MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager,
+  minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand,
+  isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions,
+  MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS,
+} from './minimax.ts'
+export type {
+  MinimaxAuthStatus, MinimaxMcpToolResult, MinimaxModel, MinimaxUsageSnapshot,
+} from './minimax.ts'
+export {
+  MinimaxCliSetup, readMinimaxSetupStatus, resolveMinimaxCli, startMinimaxSetup, stopMinimaxSetup,
+} from './minimax-cli.ts'
+export type { MinimaxSetupMode, MinimaxSetupStatus, MinimaxCliSpec } from './minimax-cli.ts'
 export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts'
 export {
   CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
@@ -135,8 +151,8 @@ const REQUEST_IMAGE_MAX_BYTES = 1_048_576
  * used, so a change to these fields is the only thing that needs a republish.
  */
 const STRUCTURAL_FIELDS: ReadonlySet<string> = new Set([
-  'cnEnabled', 'intlEnabled', 'codebuddyEnabled',
-  'displayName', 'intlDisplayName', 'codebuddyDisplayName',
+  'cnEnabled', 'intlEnabled', 'codebuddyEnabled', 'minimaxEnabled',
+  'displayName', 'intlDisplayName', 'codebuddyDisplayName', 'minimaxDisplayName',
 ])
 
 /** The configurable-provider directory rows for the enabled editions. */
@@ -155,6 +171,9 @@ function directoryFor(live: LiveConfig): {
   }
   if (live.codebuddyEnabled()) {
     rows.push({ provider: CODEBUDDY_PROVIDER, displayName: live.codebuddyDisplayName(), settingsNs: NS, settingsPath: [] })
+  }
+  if (live.minimaxEnabled()) {
+    rows.push({ provider: MINIMAX_PROVIDER, displayName: live.minimaxDisplayName(), settingsNs: NS, settingsPath: [] })
   }
   return rows
 }
@@ -221,7 +240,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
    * own catalog, warm sessions, account reading and user choices, so a request
    * can never be resolved against another provider's catalog.
    */
-  const adapters: Record<BrandId, QoderAdapter | CodeBuddyAdapter> = {
+  const adapters: Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter> = {
     cn: new QoderAdapter({
       ...shared,
       brand: 'cn',
@@ -256,6 +275,24 @@ export function apply(ctx: Context, config: ParsedConfig): void {
         : live.codebuddyGlobalModelContextWindows(),
       modelAliases: live.codebuddyModelAliases,
     }),
+    minimax: new MinimaxAdapter({
+      maxSessions: live.maxSessions,
+      modelCacheTtlMs: live.modelCacheTtlMs,
+      catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
+      toolResultTimeoutMs: live.toolResultTimeoutMs,
+      abortGraceMs: live.abortGraceMs,
+      defaultMaxTokens: live.defaultMaxTokens,
+      defaultReasoningEffort: live.defaultReasoningEffort,
+      displayName: live.minimaxDisplayName,
+      region: live.minimaxRegion,
+      disabledModels: region => region === 'cn'
+        ? live.minimaxCnDisabledModels()
+        : live.minimaxGlobalDisabledModels(),
+      modelContextWindows: region => region === 'cn'
+        ? live.minimaxCnModelContextWindows()
+        : live.minimaxGlobalModelContextWindows(),
+      modelAliases: live.minimaxModelAliases,
+    }),
   }
 
   ctx.inject(['attachments'], (scope) => {
@@ -273,6 +310,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   const enabled = (id: BrandId): boolean => {
     if (id === 'cn') return live.cnEnabled()
     if (id === 'global') return live.intlEnabled()
+    if (id === 'minimax') return live.minimaxEnabled()
     return live.codebuddyEnabled()
   }
 
@@ -329,11 +367,15 @@ export function apply(ctx: Context, config: ParsedConfig): void {
     adapters.cn.close()
     adapters.global.close()
     ;(adapters.codebuddy as CodeBuddyAdapter).close()
+    ;(adapters.minimax as MinimaxAdapter).close()
   }, 'llm-qoder-cn.sessions')
 
   // A CLI helper still running when this plugin is reloaded or removed would
   // otherwise keep writing into a page that can no longer read it.
-  ctx.effect(() => () => stopSetup(), 'llm-qoder-cn.setup')
+  ctx.effect(() => () => {
+    stopSetup()
+    stopMinimaxSetup()
+  }, 'llm-qoder-cn.setup')
 
   // The settings page's data source: the live catalog joined with the user's
   // on/off and window choices. Served from its own route because the catalog

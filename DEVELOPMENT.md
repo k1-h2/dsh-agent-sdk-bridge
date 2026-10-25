@@ -52,11 +52,35 @@
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
   额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。
+- **MiniMax Code（ACP）**：`src/minimax.ts` 直接启动 `mcode acp` 并用
+  `@agentclientprotocol/sdk` 的 `ClientSideConnection` 说话；`session/new` 的
+  `configOptions` 提供模型与思考档位，`session/prompt` 的 `session/update` 通知被翻译成
+  DSH 的 block/delta。宿主工具通过 `mcpServers` 注入一个本地 HTTP MCP endpoint
+  （`MinimaxMcpServer` + `MinimaxMcpBridge`，每个会话一个随机 token），模型调用
+  `mcp__dsh-host__*` 时桥接回 `MinimaxSession`，由后者像 CodeBuddy 一样挂起等待宿主在
+  下一次请求里回传结果。`selectModel()` 在每个会话创建后应用模型与档位。
+  模型目录不能只信 `configOptions`：0.6.12 会广告一个 CLI 自己拒绝的
+  `M3.1-Flash` 非思考值（`Invalid model reasoning`），而非思考模型又会移除
+  `thinkingEffort`。`probeModels()` 逐个选择一次，过滤失败值并记录每个模型自己的档位。
+- **MiniMax 的区域与登录**：`MAVIS_REGION` 在建进程时固定为 `cn` / `en`（`minimaxCliRegion()`），
+  登录态按 `~/.minimax/auth/prod/<region>/mcode-public/auth-state.json` 读取，并校验文件内
+  记录的 `region`。官方 CLI 同一时间只允许一个站点在线，登录第二个站点会失败；插件如实显示
+  该错误，不复制或搬运另一站的凭据。国内站/国际站的模型开关与窗口仍是独立字段。
+- **MiniMax 的内置工具**：ACP 没有关闭 CLI 内置工具的选项。`HOST_TOOL_POLICY` 写进启动时的
+  system prompt；`MinimaxAcp` 监听 `tool_call`，发现非 `mcp__dsh-host__` 的调用即
+  `session/cancel`，`MinimaxSession` 随后用 `NATIVE_TOOL_CORRECTION` 让模型改用宿主工具重试
+  （最多 2 次，用尽则本轮报错）。取消后的下一次 `session/prompt` 可能短暂返回
+  “Session already has an active Turn”，`launchPrompt()` 按 200/400/800/1600ms 退避重试。
+- **MiniMax 的 CLI 安装**：`src/minimax-cli.ts` 只固定执行 npm 的安装 / 卸载 argv，模式走
+  白名单，不接受任何页面输入；安装参数必须包含 `--allow-scripts=@minimax-ai/code,better-sqlite3`
+  与 `--ignore-scripts=false`，否则 npm 12 会跳过 better-sqlite3 的原生构建。
+  `MCODE_CLI_PATH` 可指向 `cli.js` 或可执行文件；Windows 上优先解析 npm `.cmd` shim 背后的
+  `cli.js`，避免 cmd.exe 夹在 ACP 的 stdio 之间。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
-- **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` 是结构字段。宿主在
-  `loader/volatile-update` 时重新注册或释放对应 adapter 路由，并按启用状态重建 picker 目录；
-  浏览器半侧同步 `settings.section` 的注册与释放。关闭是「不存在」，不是「隐藏」。
+- **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` / `minimaxEnabled` 是结构字段。
+  宿主在 `loader/volatile-update` 时重新注册或释放对应 adapter 路由，并按启用状态重建 picker
+  目录；浏览器半侧同步 `settings.section` 的注册与释放。关闭是「不存在」，不是「隐藏」。
 - **快照优先**：设置页把上次成功的模型列表与额度写入 `localStorage`（同源、按版本分开），
   首次渲染直接用快照，随后后台刷新并覆盖；读取失败时保留旧快照并标注。
 - **warm 会话**：每个宿主 session id 对应一个常驻内层 `query()` 子进程，对话延续与工具轮次都

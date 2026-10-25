@@ -16,7 +16,7 @@
 import { updateVolatile } from '@deepseek-ai/cosmokit'
 import { describe, expect, it } from 'vitest'
 import {
-  Config, CODEBUDDY_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
+  Config, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
 } from '../src/index.ts'
 
 /**
@@ -103,7 +103,7 @@ describe('live config', () => {
     const adapter = recorded.adapters[0]
 
     // One route per provider, each with its own adapter and catalog.
-    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER])
+    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER])
     expect(adapter.isModelDisabled('auto')).toBe(true)
     expect(adapter.contextWindowFor('auto')).toBe(200_000)
 
@@ -136,10 +136,12 @@ describe('live config', () => {
 
     // The labels are republished through the directory handle, not by
     // re-registering: the provider set never changes any more.
-    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder CN', 'Qoder 国际版', 'CodeBuddy'])
+    expect(recorded.directory.map(entry => entry.displayName))
+      .toEqual(['Qoder CN', 'Qoder 国际版', 'CodeBuddy', 'MiniMax Code'])
     recorded.volatileListener?.([['displayName']])
-    expect(recorded.directory.map(entry => entry.displayName)).toEqual(['Qoder 工作号', 'Qoder 国际版', 'CodeBuddy'])
-    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER])
+    expect(recorded.directory.map(entry => entry.displayName))
+      .toEqual(['Qoder 工作号', 'Qoder 国际版', 'CodeBuddy', 'MiniMax Code'])
+    expect(recorded.routes).toEqual([QODER_PROVIDER, QODER_INTL_PROVIDER, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER])
 
     recorded.replaced.length = 0
     recorded.volatileListener?.([['disabledModels']])
@@ -147,7 +149,9 @@ describe('live config', () => {
   })
 
   it('registers only the providers that are switched on', () => {
-    const mounted = parse({ cnEnabled: false, intlEnabled: true, codebuddyEnabled: false })
+    const mounted = parse({
+      cnEnabled: false, intlEnabled: true, codebuddyEnabled: false, minimaxEnabled: false,
+    })
     const { ctx, recorded } = stubContext()
     apply(ctx as any, mounted as any)
 
@@ -174,10 +178,19 @@ describe('live config', () => {
     expect(recorded.routes).toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER])
     expect(recorded.directory.map(entry => entry.provider)).toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER])
 
+    // MiniMax Code behaves the same way: switching it on publishes one more
+    // provider and picker group, and off removes both again.
+    updateVolatile(mounted.minimaxEnabled, parse({ minimaxEnabled: true }).minimaxEnabled)
+    recorded.volatileListener?.([['minimaxEnabled']])
+    expect(recorded.routes).toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER])
+    expect(recorded.directory.map(entry => entry.provider))
+      .toEqual([QODER_PROVIDER, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER])
+
     // Nothing on is a valid deployment: the plugin stays loaded with no routes.
     updateVolatile(mounted.cnEnabled, parse({ cnEnabled: false }).cnEnabled)
     updateVolatile(mounted.codebuddyEnabled, parse({ codebuddyEnabled: false }).codebuddyEnabled)
-    recorded.volatileListener?.([['cnEnabled', 'codebuddyEnabled']])
+    updateVolatile(mounted.minimaxEnabled, parse({ minimaxEnabled: false }).minimaxEnabled)
+    recorded.volatileListener?.([['cnEnabled', 'codebuddyEnabled', 'minimaxEnabled']])
     expect(recorded.routes).toEqual([])
     expect(recorded.directory).toEqual([])
   })

@@ -21,7 +21,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { QoderAdapter } from './adapter.ts';
 import type { CodeBuddyAdapter } from './codebuddy-adapter.ts';
-import type { BrandId, CodeBuddyRegion } from './brand.ts';
+import type { MinimaxAdapter } from './minimax-adapter.ts';
+import type { BrandId, CodeBuddyRegion, MinimaxRegion } from './brand.ts';
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
 export declare const API_PREFIX = "/api/llm-qoder-cn";
 /** One model row as a settings page renders it. */
@@ -39,10 +40,12 @@ export interface ModelRow {
     reasoning: boolean;
 }
 /** The adapters the API can reach, one per provider route. */
-export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter>>;
+export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter>>;
 /** Build model rows for a Qoder adapter. */
 export declare function buildRows(adapter: QoderAdapter): Promise<ModelRow[]>;
 /** Build model rows for the CodeBuddy adapter, for one login region. */
 export declare function buildCodeBuddyRows(adapter: CodeBuddyAdapter, region?: CodeBuddyRegion): Promise<ModelRow[]>;
+/** Build model rows for the MiniMax adapter, for one login region. */
+export declare function buildMinimaxRows(adapter: MinimaxAdapter, region?: MinimaxRegion): Promise<ModelRow[]>;
 /** Handle one request under {@link API_PREFIX}. */
 export declare function handleApi(req: IncomingMessage, res: ServerResponse, adapters: AdapterMap): Promise<void>;

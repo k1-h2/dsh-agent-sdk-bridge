@@ -146,6 +146,42 @@ window.__ModuleLoader__.load({
       codebuddyQuotaPackages: '积分包',
       codebuddyQuotaExpires: '最近到期',
       codebuddyConfirmLogout: '确定要退出当前区域的 CodeBuddy 登录吗？',
+      minimaxNav: 'MiniMax Code',
+      minimaxTitle: 'MiniMax Code',
+      minimaxIntro: '通过 Agent Client Protocol 接入 MiniMax Code（mcode acp）。选择登录区域并完成登录后，才会读取模型目录。',
+      minimaxNoModels: 'MiniMax Code 账号没有返回任何模型：请确认 CLI 已安装、已选择区域并完成登录。',
+      minimaxAuthTitle: '登录与 CLI',
+      minimaxAuthHint: 'MiniMax Code 分国内站与国际站，模型目录独立。登录由 mcode CLI 完成，凭据保存在本机；CLI 同一时间只允许一个站点登录，切换前请先在另一站点退出登录。',
+      minimaxRegionGlobal: '国际站（account.minimax.io）',
+      minimaxRegionCn: '国内站（account.minimax.cn）',
+      minimaxRegionLabel: '登录区域',
+      minimaxLogin: '登录',
+      minimaxLogout: '退出登录',
+      minimaxLoggingIn: '请在浏览器中完成授权…',
+      minimaxLoginPrompt: '登录后这里会显示账号状态与可用模型。',
+      minimaxModelsHint: '请先安装并登录 MiniMax Code，登录后才会读取并显示可用模型。',
+      minimaxRegionMismatch: '宿主返回的模型列表不属于当前区域，请刷新页面后重试。',
+      minimaxLoginStarted: '已打开浏览器，完成授权后这里会自动更新。',
+      minimaxLoginFailed: '登录失败',
+      minimaxOpenUrl: '手动打开授权页',
+      minimaxNotLoggedIn: '未登录',
+      minimaxSignedIn: '已登录',
+      minimaxConfirmLogout: '确定要退出当前区域的 MiniMax Code 登录吗？',
+      minimaxCliGroup: 'MiniMax Code CLI',
+      minimaxCliHint: '安装的是 @minimax-ai/code（含 native SQLite）。普通 npm 安装会被 npm 12 拦截安装脚本，导致 mcode 无法启动，这里使用官方要求的参数。',
+      minimaxCliInstalled: '已安装',
+      minimaxCliMissing: '未安装',
+      minimaxCliInstall: '安装 / 更新 CLI',
+      minimaxCliUninstall: '卸载 CLI',
+      minimaxCliInstalling: '正在安装…',
+      minimaxCliUninstalling: '正在卸载…',
+      minimaxConfirmUninstall: '确定要卸载全局 MiniMax Code CLI 吗？登录态会保留。',
+      minimaxCliFailed: 'CLI 操作失败',
+      minimaxShowOutput: '查看输出',
+      minimaxHideOutput: '收起输出',
+      minimaxNoUsage: 'MiniMax Code 没有公开额度接口，这里只显示登录与安装状态。',
+      minimaxCliRequired: '请先安装 MiniMax Code CLI，再登录。',
+      minimaxExpires: '凭据到期',
       advancedFields: {
         displayName: '分组名称',
         maxSessions: '并发会话数',
@@ -161,6 +197,8 @@ window.__ModuleLoader__.load({
         intlModelAliases: '国际版模型别名',
         codebuddyDisplayName: 'CodeBuddy 分组名称',
         codebuddyModelAliases: 'CodeBuddy 模型别名',
+        minimaxDisplayName: 'MiniMax 分组名称',
+        minimaxModelAliases: 'MiniMax 模型别名',
       },
     }
     const en = {
@@ -270,6 +308,42 @@ window.__ModuleLoader__.load({
       codebuddyQuotaPackages: 'Credit packages',
       codebuddyQuotaExpires: 'Earliest expiry',
       codebuddyConfirmLogout: 'Sign out of CodeBuddy for the selected region?',
+      minimaxNav: 'MiniMax Code',
+      minimaxTitle: 'MiniMax Code',
+      minimaxIntro: 'MiniMax Code over the Agent Client Protocol (mcode acp). Choose a login region and sign in before the catalog is read.',
+      minimaxNoModels: 'The MiniMax Code account returned no models: make sure the CLI is installed, a region is selected, and the login completed.',
+      minimaxAuthTitle: 'Sign in and CLI',
+      minimaxAuthHint: 'MiniMax Code has independent mainland and international catalogs. Login runs through the mcode CLI and the credential stays on this machine; the CLI allows one region at a time, so sign out of the other before switching.',
+      minimaxRegionGlobal: 'International (account.minimax.io)',
+      minimaxRegionCn: 'Mainland (account.minimax.cn)',
+      minimaxRegionLabel: 'Login region',
+      minimaxLogin: 'Sign in',
+      minimaxLogout: 'Sign out',
+      minimaxLoggingIn: 'Finish the authorization in your browser…',
+      minimaxLoginPrompt: 'Sign in to see the account state and available models.',
+      minimaxModelsHint: 'Install and sign in to MiniMax Code first; the model catalog is read only after sign-in.',
+      minimaxRegionMismatch: 'The host answered with the other region\'s models; reload the page and try again.',
+      minimaxLoginStarted: 'Browser opened; this card updates when the login completes.',
+      minimaxLoginFailed: 'Sign-in failed',
+      minimaxOpenUrl: 'Open the authorization page',
+      minimaxNotLoggedIn: 'Not signed in',
+      minimaxSignedIn: 'Signed in',
+      minimaxConfirmLogout: 'Sign out of MiniMax Code for the selected region?',
+      minimaxCliGroup: 'MiniMax Code CLI',
+      minimaxCliHint: 'Installs @minimax-ai/code (including its native SQLite dependency). npm 12 blocks install scripts by default, which leaves mcode unable to start; the official flags are used here.',
+      minimaxCliInstalled: 'Installed',
+      minimaxCliMissing: 'Not installed',
+      minimaxCliInstall: 'Install / update CLI',
+      minimaxCliUninstall: 'Uninstall CLI',
+      minimaxCliInstalling: 'Installing…',
+      minimaxCliUninstalling: 'Uninstalling…',
+      minimaxConfirmUninstall: 'Uninstall the global MiniMax Code CLI? The login state is kept.',
+      minimaxCliFailed: 'CLI action failed',
+      minimaxShowOutput: 'Show output',
+      minimaxHideOutput: 'Hide output',
+      minimaxNoUsage: 'MiniMax Code has no public quota API; this card shows login and install state only.',
+      minimaxCliRequired: 'Install the MiniMax Code CLI before signing in.',
+      minimaxExpires: 'Credential expires',
       advancedFields: {
         displayName: 'Group name',
         maxSessions: 'Concurrent sessions',
@@ -285,6 +359,8 @@ window.__ModuleLoader__.load({
         intlModelAliases: 'International model aliases',
         codebuddyDisplayName: 'CodeBuddy group name',
         codebuddyModelAliases: 'CodeBuddy model aliases',
+        minimaxDisplayName: 'MiniMax group name',
+        minimaxModelAliases: 'MiniMax model aliases',
       },
     }
 
@@ -317,6 +393,10 @@ window.__ModuleLoader__.load({
       codebuddy: [
         ['codebuddyDisplayName', 'text'],
         ['codebuddyModelAliases', 'json'],
+      ],
+      minimax: [
+        ['minimaxDisplayName', 'text'],
+        ['minimaxModelAliases', 'json'],
       ],
     }
 
@@ -375,6 +455,22 @@ window.__ModuleLoader__.load({
           // The page swaps these for the selected login region's own fields.
           disabled: 'codebuddyGlobalDisabledModels',
           windows: 'codebuddyGlobalModelContextWindows',
+        },
+      },
+      {
+        id: 'minimax',
+        kind: 'minimax',
+        settingsId: 'minimax',
+        order: 39,
+        titleKey: 'minimaxTitle',
+        navKey: 'minimaxNav',
+        introKey: 'minimaxIntro',
+        noModelsKey: 'minimaxNoModels',
+        fields: {
+          enabled: 'minimaxEnabled',
+          // Swapped for the selected region's fields, like CodeBuddy.
+          disabled: 'minimaxCnDisabledModels',
+          windows: 'minimaxCnModelContextWindows',
         },
       },
     ]
@@ -996,6 +1092,300 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function minimaxSnapshot(region) {
+      const cached = readCache('minimax', `snapshot:${region}`)
+      return cached !== null && typeof cached === 'object' ? cached : undefined
+    }
+
+    function rememberMinimax(region, patch) {
+      const previous = minimaxSnapshot(region) ?? {}
+      writeCache('minimax', `snapshot:${region}`, { ...previous, ...patch, at: Date.now() })
+    }
+
+    /**
+     * MiniMax Code's account card: region, CLI install state and browser login.
+     *
+     * The login is a CLI process: `mcode login` opens the browser and writes an
+     * auth file. The card polls the host while that process runs, then re-reads
+     * the account so the model page can unlock.
+     */
+    function MinimaxCard({ ctx, t, brand, refreshSignal, onAuthChange, onRegionChange }) {
+      const form = ctx.configForms.get(NS)
+      const subscribe = useCallback(listener => form.subscribe(listener), [form])
+      const read = useCallback(() => form.getSnapshot(), [form])
+      const snapshot = useSyncExternalStore(subscribe, read)
+      const value = snapshot?.value ?? {}
+      const configuredRegion = value.minimaxRegion === 'global' ? 'global' : 'cn'
+      const [region, setRegionState] = useState(configuredRegion)
+      const regionRef = useRef(configuredRegion)
+      const initial = minimaxSnapshot(configuredRegion)
+      const [auth, setAuth] = useState(initial?.auth)
+      const [usage, setUsage] = useState(initial?.usage)
+      const [setup, setSetup] = useState(undefined)
+      const [showLog, setShowLog] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState(undefined)
+      const lastRunning = useRef(false)
+      const signingIn = auth?.running === true
+      const signedIn = auth?.signedIn === true
+      const runningSetup = setup?.running === true
+      const installed = setup?.installed === true || usage?.installed === true
+
+      const applySnapshot = useCallback(target => {
+        const cached = minimaxSnapshot(target)
+        setAuth(cached?.auth)
+        setUsage(cached?.usage)
+      }, [])
+
+      const loadUsage = useCallback(async (fresh = false, target = regionRef.current) => {
+        try {
+          const payload = await api(`/usage?brand=minimax&region=${target}${fresh ? '&fresh=1' : ''}`, { timeout: 30_000 })
+          if (regionRef.current !== target) return
+          setUsage(payload)
+          rememberMinimax(target, { usage: payload })
+          if (typeof payload?.signedIn === 'boolean') {
+            setAuth(previous => (previous?.running === true
+              ? previous
+              : { ...previous, running: false, region: target, signedIn: payload.signedIn }))
+          }
+        } catch (err) {
+          if (regionRef.current !== target) return
+          setUsage({ error: String(err?.message ?? err) })
+        }
+      }, [])
+
+      const pollAuth = useCallback(async (target = regionRef.current) => {
+        try {
+          const next = await api(`/auth?brand=minimax&region=${target}`, { timeout: 10_000 })
+          if (regionRef.current !== target) return
+          setAuth(next)
+          rememberMinimax(target, { auth: next })
+          if (lastRunning.current && next.running === false) {
+            lastRunning.current = false
+            if (next.signedIn === true) {
+              await loadUsage(true, target)
+              onAuthChange?.(true)
+            }
+          }
+          if (next.running === true) lastRunning.current = true
+        } catch (err) {
+          if (regionRef.current !== target) return
+          setError(String(err?.message ?? err))
+        }
+      }, [loadUsage, onAuthChange])
+
+      const pollSetup = useCallback(async () => {
+        try {
+          setSetup(await api('/setup?brand=minimax', { timeout: 10_000 }))
+        } catch {
+          /* a host without the installer route leaves this group empty */
+        }
+      }, [])
+
+      useEffect(() => {
+        regionRef.current = region
+        applySnapshot(region)
+        setError(undefined)
+        void pollAuth(region)
+        void loadUsage(false, region)
+        void pollSetup()
+      }, [region, refreshSignal, applySnapshot, loadUsage, pollAuth, pollSetup])
+
+      useEffect(() => {
+        if (configuredRegion === regionRef.current) return
+        setRegionState(configuredRegion)
+        regionRef.current = configuredRegion
+        applySnapshot(configuredRegion)
+      }, [configuredRegion, applySnapshot])
+
+      useEffect(() => {
+        if (!signingIn) return undefined
+        const timer = setInterval(() => { void pollAuth(region) }, 1500)
+        return () => clearInterval(timer)
+      }, [signingIn, pollAuth, region])
+
+      useEffect(() => {
+        if (!runningSetup) return undefined
+        const timer = setInterval(() => { void pollSetup() }, 1200)
+        return () => clearInterval(timer)
+      }, [runningSetup, pollSetup])
+
+      useEffect(() => {
+        if (!runningSetup && setup?.code === 0) void pollAuth(region)
+      }, [runningSetup, setup?.code, pollAuth, region])
+
+      const authResolved = auth !== undefined
+      useEffect(() => {
+        if (!authResolved) return
+        onAuthChange?.(signedIn)
+      }, [authResolved, signedIn, onAuthChange])
+
+      const setRegion = useCallback(next => {
+        if (next === regionRef.current) return
+        regionRef.current = next
+        lastRunning.current = false
+        setRegionState(next)
+        applySnapshot(next)
+        setError(undefined)
+        onRegionChange?.(next)
+        void (async () => {
+          try {
+            const accepted = await withDeadline(form.set('minimaxRegion', next), WRITE_TIMEOUT_MS, t('timeout'))
+            if (accepted === false) throw new Error(t('saveFailed'))
+          } catch (err) {
+            if (regionRef.current !== next) return
+            setError(`${t('saveFailed')}：${String(err?.message ?? err)}`)
+            const fallback = form.getSnapshot()?.value?.minimaxRegion === 'global' ? 'global' : 'cn'
+            regionRef.current = fallback
+            setRegionState(fallback)
+            applySnapshot(fallback)
+            onRegionChange?.(fallback)
+          }
+        })()
+      }, [applySnapshot, form, onRegionChange, t])
+
+      const startLogin = useCallback(async () => {
+        const target = regionRef.current
+        setBusy(true)
+        setError(undefined)
+        try {
+          const next = await api('/auth', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ brand: 'minimax', region: target, action: 'login' }),
+            timeout: 20_000,
+          })
+          if (regionRef.current !== target) return
+          setAuth(next)
+          rememberMinimax(target, { auth: next })
+          if (next.running === true) lastRunning.current = true
+        } catch (err) {
+          if (regionRef.current !== target) return
+          setError(`${t('minimaxLoginFailed')}：${String(err?.message ?? err)}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [t])
+
+      const logout = useCallback(async () => {
+        if (typeof window.confirm === 'function' && !window.confirm(t('minimaxConfirmLogout'))) return
+        const target = regionRef.current
+        setBusy(true)
+        setError(undefined)
+        try {
+          const next = await api('/auth', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ brand: 'minimax', region: target, action: 'logout' }),
+            timeout: 30_000,
+          })
+          if (regionRef.current !== target) return
+          setAuth(next)
+          rememberMinimax(target, { auth: next })
+          onAuthChange?.(false)
+        } catch (err) {
+          if (regionRef.current !== target) return
+          setError(`${t('minimaxLoginFailed')}：${String(err?.message ?? err)}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [onAuthChange, t])
+
+      const runSetup = useCallback(async mode => {
+        if (mode === 'uninstall' && typeof window.confirm === 'function' && !window.confirm(t('minimaxConfirmUninstall'))) return
+        setBusy(true)
+        setError(undefined)
+        setShowLog(true)
+        try {
+          setSetup(await api('/setup', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ brand: 'minimax', mode }),
+            timeout: 15_000,
+          }))
+        } catch (err) {
+          setError(`${t('minimaxCliFailed')}：${String(err?.message ?? err)}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [t])
+
+      const lines = Array.isArray(setup?.lines) ? setup.lines : []
+      const setupBusy = busy || runningSetup
+
+      return h('div', { style: css.usageCard },
+        h('div', { style: css.usageHead },
+          h('h3', { style: css.h3 }, t('minimaxAuthTitle')),
+          h('span', { style: { ...css.note, opacity: 0.7 } }, signedIn ? t('minimaxSignedIn') : t('minimaxNotLoggedIn')),
+          signedIn
+            ? h('button', { style: { ...css.btn, marginLeft: 'auto' }, disabled: busy, onClick: () => void loadUsage(true) }, t('usageRefresh'))
+            : null,
+        ),
+        h('div', { style: css.note }, t('minimaxAuthHint')),
+        h('div', { style: css.usageLine },
+          h('span', { style: css.usageLabel }, t('minimaxRegionLabel')),
+          h('select', {
+            style: css.select,
+            value: region,
+            disabled: busy,
+            onChange: event => { setRegion(event.target.value) },
+          },
+            h('option', { key: 'cn', value: 'cn' }, t('minimaxRegionCn')),
+            h('option', { key: 'global', value: 'global' }, t('minimaxRegionGlobal')),
+          ),
+          h('button', {
+            style: signedIn ? { ...css.btn, ...css.btnAlert } : css.btn,
+            disabled: busy || signingIn || (!signedIn && !installed),
+            onClick: () => { if (signedIn) void logout(); else void startLogin() },
+          }, signingIn ? t('minimaxLoggingIn') : signedIn ? t('minimaxLogout') : t('minimaxLogin')),
+        ),
+        !installed && !signedIn
+          ? h('div', { style: css.note }, t('minimaxCliRequired'))
+          : h('div', { style: css.note }, t('minimaxNoUsage')),
+        typeof auth?.expiresAt === 'number'
+          ? h('div', { style: css.usageFoot },
+              h('span', null, `${t('minimaxExpires')} ${dateLabel(auth.expiresAt)}`),
+            )
+          : null,
+        typeof auth?.url === 'string' && signingIn
+          ? h('div', { style: css.usageLine },
+              h('a', { href: auth.url, target: '_blank', rel: 'noreferrer', style: css.link }, t('minimaxOpenUrl')),
+              h('span', { style: css.note }, t('minimaxLoginStarted')),
+            )
+          : null,
+        auth?.error !== undefined ? h('div', { style: css.err }, `${t('minimaxLoginFailed')}：${auth.error}`) : null,
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+          h('div', { style: css.usageLine },
+            h('span', { style: css.usageLabel }, t('minimaxCliGroup')),
+            h('span', { style: css.usageValue }, installed ? t('minimaxCliInstalled') : t('minimaxCliMissing')),
+            h('button', {
+              style: { ...css.btn, marginLeft: 'auto' },
+              disabled: setupBusy,
+              onClick: () => void runSetup('install'),
+            }, runningSetup && setup?.mode === 'install' ? t('minimaxCliInstalling') : t('minimaxCliInstall')),
+            installed
+              ? h('button', {
+                  style: { ...css.btn, ...css.btnAlert },
+                  disabled: setupBusy,
+                  onClick: () => void runSetup('uninstall'),
+                }, runningSetup && setup?.mode === 'uninstall' ? t('minimaxCliUninstalling') : t('minimaxCliUninstall'))
+              : null,
+          ),
+          h('div', { style: css.note }, t('minimaxCliHint')),
+          lines.length === 0
+            ? null
+            : h('div', null,
+                h('button', {
+                  style: css.btn,
+                  onClick: () => setShowLog(value => !value),
+                }, showLog ? t('minimaxHideOutput') : t('minimaxShowOutput')),
+                showLog ? h('pre', { style: css.log }, lines.join('\n')) : null,
+              ),
+        ),
+        error !== undefined ? h('div', { style: css.err }, error) : null,
+      )
+    }
+
     /**
      * The model table plus the advanced block.
      *
@@ -1006,18 +1396,26 @@ window.__ModuleLoader__.load({
      */
     function SettingsPage({ ctx, t, brand }) {
       const form = ctx.configForms.get(NS)
-      const initialRegion = form.getSnapshot()?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
-      // Each CodeBuddy region has its own catalog, deny-list and windows; the
-      // page key follows the region so switching shows that region's choices.
+      /** CodeBuddy and MiniMax both have two login regions and their own catalogs. */
+      const regional = brand.id === 'codebuddy' || brand.id === 'minimax'
+      const initialSnapshot = form.getSnapshot()?.value ?? {}
+      const initialRegion = brand.id === 'minimax'
+        ? (initialSnapshot.minimaxRegion === 'global' ? 'global' : 'cn')
+        : (initialSnapshot.codebuddyRegion === 'cn' ? 'cn' : 'global')
+      const snapshotFor = target => brand.id === 'minimax'
+        ? minimaxSnapshot(target)
+        : codeBuddySnapshot(target)
+      // Each login region has its own catalog, deny-list and windows; the page
+      // key follows the region so switching shows that region's choices.
       const [region, setRegion] = useState(initialRegion)
-      const modelsKind = brand.id === 'codebuddy' ? `models:${region}` : 'models'
+      const modelsKind = regional ? `models:${region}` : 'models'
       const cached = readCache(brand.id, modelsKind)
       const [models, setModels] = useState(() => Array.isArray(cached?.rows) ? cached.rows : undefined)
       const [catalogNotice, setCatalogNotice] = useState(() =>
         typeof cached?.notice === 'string' ? cached.notice : undefined)
       const [signedIn, setSignedIn] = useState(() =>
-        brand.id === 'codebuddy'
-          ? cached?.signedIn === true || codeBuddySnapshot(initialRegion)?.auth?.signedIn === true
+        regional
+          ? cached?.signedIn === true || snapshotFor(initialRegion)?.auth?.signedIn === true
           : undefined)
       const [error, setError] = useState(undefined)
       const [status, setStatus] = useState(undefined)
@@ -1035,7 +1433,9 @@ window.__ModuleLoader__.load({
       const read = useCallback(() => form.getSnapshot(), [form])
       const snapshot = useSyncExternalStore(subscribe, read)
 
-      const configuredRegion = snapshot?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
+      const configuredRegion = brand.id === 'minimax'
+        ? (snapshot?.value?.minimaxRegion === 'global' ? 'global' : 'cn')
+        : (snapshot?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global')
       /**
        * The region the user just picked, until the config write lands.
        *
@@ -1044,13 +1444,13 @@ window.__ModuleLoader__.load({
        */
       const pendingRegion = useRef(null)
       useEffect(() => {
-        if (brand.id !== 'codebuddy') return
+        if (!regional) return
         if (pendingRegion.current !== null) {
           if (pendingRegion.current === configuredRegion) pendingRegion.current = null
           return
         }
         setRegion(current => (current === configuredRegion ? current : configuredRegion))
-      }, [brand.id, configuredRegion, region])
+      }, [regional, configuredRegion, region])
 
       const selectRegion = useCallback(next => {
         pendingRegion.current = next
@@ -1062,7 +1462,12 @@ window.__ModuleLoader__.load({
             disabled: region === 'cn' ? 'codebuddyCnDisabledModels' : 'codebuddyGlobalDisabledModels',
             windows: region === 'cn' ? 'codebuddyCnModelContextWindows' : 'codebuddyGlobalModelContextWindows',
           }
-        : brand.fields
+        : brand.id === 'minimax'
+          ? {
+              disabled: region === 'cn' ? 'minimaxCnDisabledModels' : 'minimaxGlobalDisabledModels',
+              windows: region === 'cn' ? 'minimaxCnModelContextWindows' : 'minimaxGlobalModelContextWindows',
+            }
+          : brand.fields
 
       const describeFace = ctx.configForms.describe()
       const describeSubscribe = useCallback(listener => describeFace.subscribe(listener), [describeFace])
@@ -1071,18 +1476,18 @@ window.__ModuleLoader__.load({
       useEffect(() => { describeFace.ensure().catch(() => undefined) }, [describeFace])
 
       const fetchModels = useCallback(async (fresh = false) => {
-        const regionQuery = brand.id === 'codebuddy' ? `&region=${region}` : ''
+        const regionQuery = regional ? `&region=${region}` : ''
         const payload = await api(`/models?brand=${brand.id}${regionQuery}${fresh ? '&fresh=1' : ''}`)
         // Never adopt a table the host answered for another login region.
-        if (brand.id === 'codebuddy' && typeof payload?.region === 'string' && payload.region !== region) {
-          throw new Error(t('codebuddyRegionMismatch'))
+        if (regional && typeof payload?.region === 'string' && payload.region !== region) {
+          throw new Error(t(brand.id === 'minimax' ? 'minimaxRegionMismatch' : 'codebuddyRegionMismatch'))
         }
         return {
           rows: Array.isArray(payload?.models) ? payload.models : [],
           notice: typeof payload?.notice === 'string' ? payload.notice : undefined,
-          signedIn: brand.id === 'codebuddy' ? payload?.signedIn === true : undefined,
+          signedIn: regional ? payload?.signedIn === true : undefined,
         }
-      }, [brand.id, region, t])
+      }, [brand.id, regional, region, t])
 
       /** Adopt one read and remember it for the next visit to this region. */
       const adopt = useCallback((rows, notice, nextSignedIn) => {
@@ -1123,27 +1528,30 @@ window.__ModuleLoader__.load({
        * so it stays correct even before the config write commits.
        */
       useEffect(() => {
-        if (brand.id === 'codebuddy') {
+        if (regional) {
           const saved = readCache(brand.id, modelsKind)
+          const accountSnapshot = brand.id === 'minimax'
+            ? minimaxSnapshot(region)
+            : codeBuddySnapshot(region)
           setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
           setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
           // The account snapshot already knows whether this region is signed
           // in, so the locked view does not flash while the catalog boots.
-          setSignedIn(saved?.signedIn === true || codeBuddySnapshot(region)?.auth?.signedIn === true)
+          setSignedIn(saved?.signedIn === true || accountSnapshot?.auth?.signedIn === true)
           setError(undefined)
         }
         // A switch must not be served from the host's cached catalog: the CLI
         // only settles into the new login environment on a fresh read.
-        const switched = brand.id === 'codebuddy'
+        const switched = regional
           && lastLoaded.current !== undefined
           && lastLoaded.current !== region
         lastLoaded.current = region
         void load(switched)
-      }, [brand.id, modelsKind, region, load])
+      }, [brand.id, regional, modelsKind, region, load])
 
       /** Login/logout flips which catalog the page is allowed to show. */
       const handleAuthChange = useCallback(next => {
-        if (brand.id !== 'codebuddy') return
+        if (!regional) return
         setSignedIn(next === true)
         if (next === true) {
           refresh()
@@ -1152,7 +1560,7 @@ window.__ModuleLoader__.load({
         setModels([])
         setCatalogNotice(undefined)
         writeCache(brand.id, kindRef.current, { rows: [], notice: undefined, signedIn: false, at: Date.now() })
-      }, [brand.id, refresh])
+      }, [brand.id, regional, refresh])
 
       /**
        * Re-read until the list reflects what was just written, or give up.
@@ -1377,7 +1785,7 @@ window.__ModuleLoader__.load({
         })
       }, [all, query, onlyEnabled])
 
-      const codebuddyLocked = brand.id === 'codebuddy' && signedIn !== true
+      const regionalLocked = regional && signedIn !== true
       const authCard = brand.kind === 'codebuddy'
         ? h(CodeBuddyCard, {
             t, ctx, brand, refreshSignal: usageTick,
@@ -1385,16 +1793,22 @@ window.__ModuleLoader__.load({
             onAuthChange: handleAuthChange,
             onRegionChange: selectRegion,
           })
-        : null
+        : brand.kind === 'minimax'
+          ? h(MinimaxCard, {
+              t, ctx, brand, refreshSignal: usageTick,
+              onAuthChange: handleAuthChange,
+              onRegionChange: selectRegion,
+            })
+          : null
 
       // Signed out: do not read or show a catalog that the CLI would refuse.
-      if (codebuddyLocked) {
+      if (regionalLocked) {
         return h('div', { style: css.page },
           h('h2', { style: css.h2 }, t(brand.titleKey)),
           h('p', { style: css.intro }, t(brand.introKey)),
           authCard,
           h('div', { style: css.guide },
-            h('div', { style: css.guideText }, t('codebuddyModelsHint')),
+            h('div', { style: css.guideText }, t(brand.id === 'minimax' ? 'minimaxModelsHint' : 'codebuddyModelsHint')),
           ),
           error !== undefined ? h('div', { style: css.err }, error) : null,
         )
@@ -1409,7 +1823,7 @@ window.__ModuleLoader__.load({
        */
       const renderGuide = () => h('div', { style: css.guide },
         h('div', { style: css.guideText }, t(brand.noModelsKey)),
-        brand.kind === 'codebuddy'
+        brand.kind !== 'qoder'
           ? null
           : h('button', {
               style: { ...css.btn, ...css.btnAlert },
@@ -1425,7 +1839,7 @@ window.__ModuleLoader__.load({
           // remounts the account card and makes it snap back to the region the
           // config still holds while the switch is in flight.
           h('p', { style: css.intro }, t(brand.introKey)),
-          brand.kind === 'codebuddy' ? authCard : null,
+          regional ? authCard : null,
           error === undefined
             ? h('div', { style: css.note }, t('loading'))
             : h('div', null,
@@ -1487,7 +1901,7 @@ window.__ModuleLoader__.load({
       return h('div', { style: css.page },
         h('h2', { style: css.h2 }, t(brand.titleKey)),
         h('p', { style: css.intro }, t(brand.introKey)),
-        brand.kind === 'codebuddy'
+        regional
           ? authCard
           : h(UsageCard, { t, brand, refreshSignal: usageTick }),
 
@@ -1532,7 +1946,7 @@ window.__ModuleLoader__.load({
         error !== undefined ? h('div', { style: css.err }, error) : null,
         status !== undefined && error === undefined ? h('div', { style: css.note }, status) : null,
 
-        brand.kind === 'codebuddy' ? null : h('div', { style: css.group },
+        brand.kind !== 'qoder' ? null : h('div', { style: css.group },
           h('h3', { style: css.h3 }, t(brand.cliGroupKey)),
           h('div', { style: css.note }, t(brand.cliHintKey)),
           h('div', { style: { ...css.bar, flexWrap: 'nowrap' } },
@@ -1601,8 +2015,16 @@ window.__ModuleLoader__.load({
       }, [form, t])
 
       const labelOf = brand => {
-        const key = brand.id === 'cn' ? 'displayName' : brand.id === 'global' ? 'intlDisplayName' : 'codebuddyDisplayName'
-        const fallback = brand.id === 'cn' ? t('nav') : brand.id === 'global' ? t('intlNav') : t('codebuddyNav')
+        const key = brand.id === 'cn'
+          ? 'displayName'
+          : brand.id === 'global'
+            ? 'intlDisplayName'
+            : brand.id === 'minimax' ? 'minimaxDisplayName' : 'codebuddyDisplayName'
+        const fallback = brand.id === 'cn'
+          ? t('nav')
+          : brand.id === 'global'
+            ? t('intlNav')
+            : brand.id === 'minimax' ? t('minimaxNav') : t('codebuddyNav')
         const stored = value[key]
         return typeof stored === 'string' && stored !== '' ? stored : fallback
       }

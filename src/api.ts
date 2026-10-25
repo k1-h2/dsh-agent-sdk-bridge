@@ -22,10 +22,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { QoderAdapter } from './adapter.ts'
 import type { CodeBuddyAdapter } from './codebuddy-adapter.ts'
-import type { BrandId, CodeBuddyRegion } from './brand.ts'
+import type { MinimaxAdapter } from './minimax-adapter.ts'
+import type { BrandId, CodeBuddyRegion, MinimaxRegion } from './brand.ts'
 import { isBrandId, isCodeBuddyRegion } from './brand.ts'
 import { priceFactorOf } from './models.ts'
 import { isSetupMode, readSetupStatus, startSetup } from './setup.ts'
+import { isMinimaxSetupMode, readMinimaxSetupStatus, startMinimaxSetup } from './minimax-cli.ts'
 
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
 export const API_PREFIX = '/api/llm-qoder-cn'
@@ -46,7 +48,7 @@ export interface ModelRow {
 }
 
 /** The adapters the API can reach, one per provider route. */
-export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter>>
+export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter>>
 
 /** Answer one request with JSON. */
 function send(res: ServerResponse, status: number, payload: unknown): void {
@@ -116,6 +118,32 @@ export async function buildCodeBuddyRows(
   })
 }
 
+/** Build model rows for the MiniMax adapter, for one login region. */
+export async function buildMinimaxRows(
+  adapter: MinimaxAdapter,
+  region?: MinimaxRegion,
+): Promise<ModelRow[]> {
+  const live = await adapter.describeCatalog(region)
+  return live.map(entry => {
+    const override = adapter.contextWindowFor(entry.id, region)
+    const choices = new Set<number>(entry.contextWindows)
+    choices.add(entry.defaultContextWindow)
+    if (override !== undefined) choices.add(override)
+    return {
+      id: entry.id,
+      name: entry.name,
+      ...entry.description === undefined ? {} : { description: entry.description },
+      enabled: !adapter.isModelDisabled(entry.id, region),
+      vision: entry.vision,
+      contextWindow: override ?? entry.defaultContextWindow,
+      contextWindows: [...choices].sort((a, b) => a - b),
+      defaultContextWindow: entry.defaultContextWindow,
+      ...override === undefined ? {} : { override },
+      reasoning: entry.reasoning,
+    }
+  })
+}
+
 /** Largest request body this route accepts. */
 const MAX_BODY_BYTES = 2048
 
@@ -159,31 +187,38 @@ export async function handleApi(
     const queryBrand = brandFrom(url.searchParams.get('brand'))
 
     if (queryBrand === undefined) {
-      send(res, 400, { error: 'brand 只接受 cn、global 或 codebuddy' })
+      send(res, 400, { error: 'brand 只接受 cn、global、codebuddy 或 minimax' })
       return
     }
     const adapter = adapters[queryBrand]
     const codebuddy = queryBrand === 'codebuddy' ? adapter as CodeBuddyAdapter : undefined
+    const minimax = queryBrand === 'minimax' ? adapter as MinimaxAdapter : undefined
+    const regional = codebuddy !== undefined || minimax !== undefined
 
     if (path === '/models' && method === 'GET') {
       const requestedRegion = url.searchParams.get('region')
       const region = requestedRegion === null || requestedRegion === ''
         ? undefined
         : regionFrom(requestedRegion)
-      if (codebuddy !== undefined && region === undefined && requestedRegion !== null && requestedRegion !== '') {
+      if (regional && region === undefined && requestedRegion !== null && requestedRegion !== '') {
         send(res, 400, { error: 'region 只接受 global 或 cn' })
         return
       }
       if (url.searchParams.get('fresh') === '1') {
         if (codebuddy !== undefined) codebuddy.invalidateCatalog(region)
+        else if (minimax !== undefined) minimax.invalidateCatalog(region)
         else adapter.invalidateCatalog()
       }
-      const signedIn = codebuddy?.isSignedIn(region)
+      const signedIn = codebuddy?.isSignedIn(region) ?? minimax?.isSignedIn(region)
       const rows = codebuddy !== undefined
         ? signedIn === false ? [] : await buildCodeBuddyRows(codebuddy, region)
-        : await buildRows(adapter as QoderAdapter)
+        : minimax !== undefined
+          ? signedIn === false ? [] : await buildMinimaxRows(minimax, region)
+          : await buildRows(adapter as QoderAdapter)
       const notice = rows.length === 0
-        ? codebuddy === undefined ? adapter.catalogError() : codebuddy.catalogError(region)
+        ? codebuddy !== undefined
+          ? codebuddy.catalogError(region)
+          : minimax !== undefined ? minimax.catalogError(region) : adapter.catalogError()
         : undefined
       send(res, 200, {
         brand: queryBrand,
@@ -200,25 +235,30 @@ export async function handleApi(
     if (path === '/usage' && method === 'GET') {
       const requested = url.searchParams.get('region')
       const region = requested === null || requested === '' ? undefined : regionFrom(requested)
-      if (codebuddy !== undefined && region === undefined && requested !== null && requested !== '') {
+      if (regional && region === undefined && requested !== null && requested !== '') {
         send(res, 400, { error: 'region 只接受 global 或 cn' })
         return
       }
+      const fresh = url.searchParams.get('fresh') === '1'
       const snapshot = codebuddy !== undefined
-        ? await codebuddy.usageInfo(url.searchParams.get('fresh') === '1', region)
-        : await adapter.usageInfo(url.searchParams.get('fresh') === '1')
+        ? await codebuddy.usageInfo(fresh, region)
+        : minimax !== undefined
+          ? await minimax.usageInfo(fresh, region)
+          : await adapter.usageInfo(fresh)
       send(res, 200, {
         brand: queryBrand,
         ...snapshot,
-        ...codebuddy === undefined ? {} : { signedIn: codebuddy.isSignedIn(region) },
+        ...codebuddy === undefined && minimax === undefined
+          ? {}
+          : { signedIn: (codebuddy ?? minimax)!.isSignedIn(region) },
       })
       return
     }
 
     if (path === '/auth') {
       if (method === 'GET') {
-        if (codebuddy === undefined) {
-          send(res, 404, { error: '该 provider 没有 CodeBuddy 登录流程' })
+        if (codebuddy === undefined && minimax === undefined) {
+          send(res, 404, { error: '该 provider 没有浏览器登录流程' })
           return
         }
         const region = regionFrom(url.searchParams.get('region'))
@@ -226,7 +266,9 @@ export async function handleApi(
           send(res, 400, { error: 'region 只接受 global 或 cn' })
           return
         }
-        send(res, 200, { brand: 'codebuddy', ...codebuddy.authStatus(region) })
+        send(res, 200, codebuddy !== undefined
+          ? { brand: 'codebuddy', ...codebuddy.authStatus(region) }
+          : { brand: 'minimax', ...minimax!.authStatus(region) })
         return
       }
       if (method === 'POST') {
@@ -239,35 +281,50 @@ export async function handleApi(
         }
         // A POST selects its provider in the body: the page never puts the
         // brand in the URL for writes.
-        if (brandFrom(body.brand) !== 'codebuddy') {
-          send(res, 400, { error: '该 provider 没有 CodeBuddy 登录流程' })
+        const postBrand = brandFrom(body.brand)
+        if (postBrand !== 'codebuddy' && postBrand !== 'minimax') {
+          send(res, 400, { error: '该 provider 没有浏览器登录流程' })
           return
         }
-        const cb = adapters.codebuddy as CodeBuddyAdapter
         const region = regionFrom(body.region)
         if (region === undefined) {
           send(res, 400, { error: 'region 只接受 global 或 cn' })
           return
         }
-        if (body.action === 'logout') {
-          const result = await cb.logout(region)
-          if (!result.ok) {
-            send(res, 500, { error: result.error })
+        if (body.action !== 'login' && body.action !== 'logout') {
+          send(res, 400, { error: 'action 只接受 login 或 logout' })
+          return
+        }
+        if (postBrand === 'codebuddy') {
+          const cb = adapters.codebuddy as CodeBuddyAdapter
+          if (body.action === 'logout') {
+            const result = await cb.logout(region)
+            if (!result.ok) {
+              send(res, 500, { error: result.error })
+              return
+            }
+            send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
+            return
+          }
+          const started = cb.startLogin(region)
+          if (started.started === false) {
+            send(res, 409, { error: started.error })
             return
           }
           send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
           return
         }
-        if (body.action !== 'login') {
-          send(res, 400, { error: 'action 只接受 login 或 logout' })
+        const mm = adapters.minimax as MinimaxAdapter
+        if (body.action === 'logout') {
+          send(res, 200, { brand: 'minimax', ...await mm.logout(region) })
           return
         }
-        const started = cb.startLogin(region)
+        const started = mm.startLogin(region)
         if (started.started === false) {
           send(res, 409, { error: started.error })
           return
         }
-        send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
+        send(res, 200, { brand: 'minimax', ...mm.authStatus(region) })
         return
       }
     }
@@ -276,6 +333,40 @@ export async function handleApi(
       if (codebuddy !== undefined) {
         send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
         return
+      }
+      if (minimax !== undefined) {
+        if (method === 'GET') {
+          send(res, 200, readMinimaxSetupStatus())
+          return
+        }
+        if (method === 'POST') {
+          let parsed: { brand?: unknown, mode?: unknown }
+          try {
+            parsed = ((await readJson(req)) ?? {}) as { brand?: unknown, mode?: unknown }
+          } catch (error) {
+            send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
+            return
+          }
+          if (brandFrom(parsed.brand) !== 'minimax') {
+            send(res, 400, { error: '该 brand 没有 CLI 安装流程' })
+            return
+          }
+          if (!isMinimaxSetupMode(parsed.mode)) {
+            send(res, 400, { error: 'mode 只接受 install 或 uninstall' })
+            return
+          }
+          const result = startMinimaxSetup(parsed.mode, code => {
+            if (code !== 0) return
+            minimax.invalidateCatalog()
+          })
+          if (!result.started) {
+            const status = result.reason === 'busy' ? 409 : 501
+            send(res, status, { error: result.error })
+            return
+          }
+          send(res, 200, readMinimaxSetupStatus())
+          return
+        }
       }
       const qoder = adapter as QoderAdapter
       if (method === 'GET') {
@@ -291,7 +382,7 @@ export async function handleApi(
           return
         }
         const postBrand = brandFrom(parsed.brand)
-        if (postBrand === undefined || postBrand === 'codebuddy') {
+        if (postBrand === undefined || postBrand === 'codebuddy' || postBrand === 'minimax') {
           send(res, 400, { error: '该 brand 没有 CLI 安装脚本' })
           return
         }

@@ -14,14 +14,19 @@
 export type QoderBrand = 'cn' | 'global'
 /** The CodeBuddy integration. Its login region is a config choice, not a brand. */
 export type CodeBuddyBrandId = 'codebuddy'
+/** The MiniMax Code integration, spoken over ACP. */
+export type MinimaxBrandId = 'minimax'
 /** Every provider route this plugin registers. */
-export type BrandId = QoderBrand | CodeBuddyBrandId
+export type BrandId = QoderBrand | CodeBuddyBrandId | MinimaxBrandId
 
 /** Which SDK family a brand belongs to. */
-export type BrandFamily = 'qoder' | 'codebuddy'
+export type BrandFamily = 'qoder' | 'codebuddy' | 'minimax'
 
 /** CodeBuddy's two public login regions. Enterprise domains are out of scope. */
 export type CodeBuddyRegion = 'global' | 'cn'
+
+/** MiniMax Code's two public login regions. */
+export type MinimaxRegion = 'global' | 'cn'
 
 /** Everything that differs between provider brands. */
 export interface BrandProfile {
@@ -32,7 +37,7 @@ export interface BrandProfile {
   /** Display name used when the config leaves it empty. */
   defaultDisplayName: string
   /** Config field that switches this brand on or off. */
-  enabledKey: 'cnEnabled' | 'intlEnabled' | 'codebuddyEnabled'
+  enabledKey: 'cnEnabled' | 'intlEnabled' | 'codebuddyEnabled' | 'minimaxEnabled'
   /** SDK package that speaks this brand's protocol. */
   sdkPackage: string
   /** npm packages the CLI can be installed as, most specific first. */
@@ -105,8 +110,30 @@ export const CODEBUDDY_BRAND: BrandProfile = {
   staticCatalog: false,
 }
 
+/**
+ * MiniMax Code, spoken over the Agent Client Protocol.
+ *
+ * `mcode acp` runs as a stdio ACP server. Unlike CodeBuddy, there is no SDK
+ * package to import: the plugin speaks the protocol directly and the CLI owns
+ * login, model selection and the upstream account. The login region is a
+ * config choice (`MAVIS_REGION` pins each process), not a brand.
+ */
+export const MINIMAX_BRAND: BrandProfile = {
+  id: 'minimax',
+  family: 'minimax',
+  provider: 'minimax',
+  defaultDisplayName: 'MiniMax Code',
+  enabledKey: 'minimaxEnabled',
+  sdkPackage: '@agentclientprotocol/sdk',
+  cliPackages: [{ scope: '@minimax-ai', name: 'code' }],
+  cliCommands: ['mcode'],
+  configDirName: '.minimax',
+  setupScript: null,
+  staticCatalog: false,
+}
+
 /** Every brand, in the order the settings pages list them. */
-export const BRANDS: readonly BrandProfile[] = [CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND]
+export const BRANDS: readonly BrandProfile[] = [CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, MINIMAX_BRAND]
 
 /** Whether a value names a Qoder edition. */
 export function isQoderBrand(value: unknown): value is QoderBrand {
@@ -115,7 +142,7 @@ export function isQoderBrand(value: unknown): value is QoderBrand {
 
 /** Whether a value names one of the provider brands. */
 export function isBrandId(value: unknown): value is BrandId {
-  return isQoderBrand(value) || value === 'codebuddy'
+  return isQoderBrand(value) || value === 'codebuddy' || value === 'minimax'
 }
 
 /** Whether a value names a CodeBuddy login region. */
@@ -123,10 +150,27 @@ export function isCodeBuddyRegion(value: unknown): value is CodeBuddyRegion {
   return value === 'global' || value === 'cn'
 }
 
+/** Whether a value names a MiniMax Code login region. */
+export function isMinimaxRegion(value: unknown): value is MinimaxRegion {
+  return value === 'global' || value === 'cn'
+}
+
 /** The profile for one brand. */
 export function brandProfile(brand: BrandId): BrandProfile {
   if (brand === 'codebuddy') return CODEBUDDY_BRAND
+  if (brand === 'minimax') return MINIMAX_BRAND
   return brand === 'global' ? GLOBAL_BRAND : CN_BRAND
+}
+
+/**
+ * The region name the MiniMax CLI uses internally.
+ *
+ * The CLI calls the mainland site `cn` and the international one `en`; its
+ * login command accepts `global` and maps it to `en`. Processes are pinned
+ * with `MAVIS_REGION`, which also expects `cn`/`en`.
+ */
+export function minimaxCliRegion(region: MinimaxRegion): 'cn' | 'en' {
+  return region === 'cn' ? 'cn' : 'en'
 }
 
 /** The SDK environment a CodeBuddy region logs into. */

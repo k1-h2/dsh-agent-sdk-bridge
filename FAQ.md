@@ -63,6 +63,31 @@ bearer token，只留在本机，请不要分享或提交到仓库。从旧版�
 （copilot.tencent.com）两种公共登录区域；SDK 里的 `ioa`、`cloudhosted`、`selfhosted` 需要企业
 端点和额外凭据，不在本插件范围内。
 
+**MiniMax Code 的 CLI 装了却启动不了？** npm 12 默认拦截安装脚本，`@minimax-ai/code` 的原生
+SQLite 依赖就在这些脚本里，普通 `npm i -g` 装出来的 `mcode` 一跑就报原生模块错误。页面上的
+「安装 / 更新 CLI」已经带上官方要求的参数：
+`--ignore-scripts=false --include=optional --allow-scripts=@minimax-ai/code,better-sqlite3
+--registry https://registry.npmjs.org/ --foreground-scripts`。手动安装时请照抄这些参数；装完
+`mcode --version` 能输出版本号才算成功。
+
+**MiniMax Code 的国内站和国际站能同时登录吗？** 不能，这是官方 CLI 的限制：已登录国内站时
+再登录国际站会提示先运行 `mcode logout`。插件不会复制、搬运或伪造另一站的凭据，只会在切换区域
+时使用该区域自己的登录态；要换站请先在原站点点「退出登录」。两个区域的模型开关与上下文窗口
+仍然分别保存，切回已登录的区域会直接恢复选择。
+
+**MiniMax Code 的模型列表少了一个？** 0.6.12 的 CLI 会广告 `M3.1-Flash` 的非思考档位，但真正
+选择它时返回 `Invalid model reasoning`；插件读取目录时会逐个验证，把 CLI 实际拒绝的值过滤掉，
+只保留可用的模型。逐个验证也用于发现每个模型自己的思考档位：非思考模型没有 `thinkingEffort`，
+思考模型才有。上游修复后，新模型会自动出现，不需要改插件。
+
+**MiniMax Code 的模型为什么不直接调用宿主的工具？** ACP 没有关闭 CLI 内置工具（bash / read /
+write / glob / grep 等）的开关。插件会把「只允许 `mcp__dsh-host__*` 工具」写进系统提示；模型若
+仍尝试内置工具，插件会在执行前取消该轮并让它改用宿主工具重试。连续多次违反时本轮会明确失败，
+而不是让内置工具绕过 DSH 的权限与沙箱。
+
+**MiniMax Code 卡片为什么不显示额度？** 官方没有公开额度接口，插件只显示登录区域、CLI 安装状态、
+凭据到期时间和模型目录；积分与限免信息请以 MiniMax 官网为准。
+
 **缓存命中一直显示 0%？** v1.0.5 已修。根因不在映射：CLI 每轮都算出了真实用量，但在把用量帧
 送出来之前会**主动清零四个 token 计数**（`input_tokens` / `output_tokens` /
 `cache_read_input_tokens` / `cache_creation_input_tokens`），只留 `credits` 与

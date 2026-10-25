@@ -13,12 +13,16 @@
 export type QoderBrand = 'cn' | 'global';
 /** The CodeBuddy integration. Its login region is a config choice, not a brand. */
 export type CodeBuddyBrandId = 'codebuddy';
+/** The MiniMax Code integration, spoken over ACP. */
+export type MinimaxBrandId = 'minimax';
 /** Every provider route this plugin registers. */
-export type BrandId = QoderBrand | CodeBuddyBrandId;
+export type BrandId = QoderBrand | CodeBuddyBrandId | MinimaxBrandId;
 /** Which SDK family a brand belongs to. */
-export type BrandFamily = 'qoder' | 'codebuddy';
+export type BrandFamily = 'qoder' | 'codebuddy' | 'minimax';
 /** CodeBuddy's two public login regions. Enterprise domains are out of scope. */
 export type CodeBuddyRegion = 'global' | 'cn';
+/** MiniMax Code's two public login regions. */
+export type MinimaxRegion = 'global' | 'cn';
 /** Everything that differs between provider brands. */
 export interface BrandProfile {
     id: BrandId;
@@ -28,7 +32,7 @@ export interface BrandProfile {
     /** Display name used when the config leaves it empty. */
     defaultDisplayName: string;
     /** Config field that switches this brand on or off. */
-    enabledKey: 'cnEnabled' | 'intlEnabled' | 'codebuddyEnabled';
+    enabledKey: 'cnEnabled' | 'intlEnabled' | 'codebuddyEnabled' | 'minimaxEnabled';
     /** SDK package that speaks this brand's protocol. */
     sdkPackage: string;
     /** npm packages the CLI can be installed as, most specific first. */
@@ -64,6 +68,15 @@ export declare const GLOBAL_BRAND: BrandProfile;
  * for the mainland one). Enterprise/IOA/self-hosted login is out of scope.
  */
 export declare const CODEBUDDY_BRAND: BrandProfile;
+/**
+ * MiniMax Code, spoken over the Agent Client Protocol.
+ *
+ * `mcode acp` runs as a stdio ACP server. Unlike CodeBuddy, there is no SDK
+ * package to import: the plugin speaks the protocol directly and the CLI owns
+ * login, model selection and the upstream account. The login region is a
+ * config choice (`MAVIS_REGION` pins each process), not a brand.
+ */
+export declare const MINIMAX_BRAND: BrandProfile;
 /** Every brand, in the order the settings pages list them. */
 export declare const BRANDS: readonly BrandProfile[];
 /** Whether a value names a Qoder edition. */
@@ -72,7 +85,17 @@ export declare function isQoderBrand(value: unknown): value is QoderBrand;
 export declare function isBrandId(value: unknown): value is BrandId;
 /** Whether a value names a CodeBuddy login region. */
 export declare function isCodeBuddyRegion(value: unknown): value is CodeBuddyRegion;
+/** Whether a value names a MiniMax Code login region. */
+export declare function isMinimaxRegion(value: unknown): value is MinimaxRegion;
 /** The profile for one brand. */
 export declare function brandProfile(brand: BrandId): BrandProfile;
+/**
+ * The region name the MiniMax CLI uses internally.
+ *
+ * The CLI calls the mainland site `cn` and the international one `en`; its
+ * login command accepts `global` and maps it to `en`. Processes are pinned
+ * with `MAVIS_REGION`, which also expects `cn`/`en`.
+ */
+export declare function minimaxCliRegion(region: MinimaxRegion): 'cn' | 'en';
 /** The SDK environment a CodeBuddy region logs into. */
 export declare function codeBuddyEnvironment(region: CodeBuddyRegion): 'external' | 'internal';

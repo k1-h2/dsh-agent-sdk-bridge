@@ -17,7 +17,7 @@
 
 import { isVolatile } from '@deepseek-ai/cosmokit'
 import z from '@deepseek-ai/schemastery'
-import type { CodeBuddyRegion } from './brand.ts'
+import type { CodeBuddyRegion, MinimaxRegion } from './brand.ts'
 
 /**
  * The plugin configuration as authored in a profile patch.
@@ -109,6 +109,24 @@ export interface Config {
   codebuddyCnModelContextWindows?: Record<string, number>
   /** Extra model aliases for CodeBuddy, shared by both regions. */
   codebuddyModelAliases?: Record<string, string>
+
+  // ── MiniMax Code ────────────────────────────────────────────────────────
+  /** Whether MiniMax Code is served; same semantics as {@link cnEnabled}. */
+  minimaxEnabled?: boolean
+  /** Which MiniMax Code login region the sessions use. */
+  minimaxRegion?: MinimaxRegion
+  /** Display name of the MiniMax Code provider group in the picker. */
+  minimaxDisplayName?: string
+  /** Model ids the user switched OFF for the international region. */
+  minimaxGlobalDisabledModels?: string[]
+  /** Model ids the user switched OFF for the mainland region. */
+  minimaxCnDisabledModels?: string[]
+  /** Per-model context window for the international region, keyed by model id. */
+  minimaxGlobalModelContextWindows?: Record<string, number>
+  /** Per-model context window for the mainland region, keyed by model id. */
+  minimaxCnModelContextWindows?: Record<string, number>
+  /** Extra model aliases for MiniMax Code, shared by both regions. */
+  minimaxModelAliases?: Record<string, string>
 
   // ── Advanced: sensible defaults, rarely changed ─────────────────────────
   /**
@@ -214,6 +232,16 @@ export const Config = z.object({
   codebuddyCnModelContextWindows: z.dict(z.number()).default({}).description('CodeBuddy 国内版按模型指定的上下文窗口（token 数）。').volatile(),
   codebuddyModelAliases: z.dict(z.string()).default({}).description('CodeBuddy 额外的模型别名映射：DSH 侧名称 → CodeBuddy 模型 ID。').volatile(),
 
+  // ── MiniMax Code：ACP 接入，两种登录区域 ───────────────────────────────
+  minimaxEnabled: z.boolean().default(true).description('启用 MiniMax Code（ACP）。关闭后该设置页、模型列表与 provider 路由都会移除；登录态与模型选择会保留。').volatile(),
+  minimaxRegion: z.string().default('cn').description('MiniMax Code 登录区域：cn（国内站 account.minimax.cn）或 global（国际站 account.minimax.io）。').volatile(),
+  minimaxDisplayName: z.string().default('MiniMax Code').description('模型选择器里 MiniMax Code 分组的名称。').volatile(),
+  minimaxGlobalDisabledModels: z.array(z.string()).default([]).description('MiniMax Code 国际站已关闭的模型 ID 列表。').volatile(),
+  minimaxCnDisabledModels: z.array(z.string()).default([]).description('MiniMax Code 国内站已关闭的模型 ID 列表。').volatile(),
+  minimaxGlobalModelContextWindows: z.dict(z.number()).default({}).description('MiniMax Code 国际站按模型指定的上下文窗口（token 数）。').volatile(),
+  minimaxCnModelContextWindows: z.dict(z.number()).default({}).description('MiniMax Code 国内站按模型指定的上下文窗口（token 数）。').volatile(),
+  minimaxModelAliases: z.dict(z.string()).default({}).description('MiniMax Code 额外的模型别名映射：DSH 侧名称 → ACP 模型值。').volatile(),
+
   // ── 高级：一般无需改动 ─────────────────────────────────────────────────
   displayName: z.string().default('Qoder CN').description('模型选择器里主分组的名称。同时使用多个 Qoder 账号时可区分。').volatile(),
   maxSessions: z.number().step(1).min(1).max(64).default(8).description('同时保持的内层会话数上限，超出后按最久未使用关闭。每个会话是一个子进程。').volatile(),
@@ -255,6 +283,14 @@ export interface ResolvedConfig {
   codebuddyGlobalModelContextWindows: Readonly<Record<string, number>>
   codebuddyCnModelContextWindows: Readonly<Record<string, number>>
   codebuddyModelAliases: Readonly<Record<string, string>>
+  minimaxEnabled: boolean
+  minimaxRegion: MinimaxRegion
+  minimaxDisplayName: string
+  minimaxGlobalDisabledModels: readonly string[]
+  minimaxCnDisabledModels: readonly string[]
+  minimaxGlobalModelContextWindows: Readonly<Record<string, number>>
+  minimaxCnModelContextWindows: Readonly<Record<string, number>>
+  minimaxModelAliases: Readonly<Record<string, string>>
 }
 
 /**
@@ -333,6 +369,14 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     codebuddyGlobalModelContextWindows: () => numberMap(field('codebuddyGlobalModelContextWindows')),
     codebuddyCnModelContextWindows: () => numberMap(field('codebuddyCnModelContextWindows')),
     codebuddyModelAliases: () => stringMap(field('codebuddyModelAliases')),
+    minimaxEnabled: () => bool(field('minimaxEnabled'), true),
+    minimaxRegion: () => field('minimaxRegion') === 'global' ? 'global' : 'cn',
+    minimaxDisplayName: () => nonEmpty(field('minimaxDisplayName'), 'MiniMax Code'),
+    minimaxGlobalDisabledModels: () => stringList(field('minimaxGlobalDisabledModels')),
+    minimaxCnDisabledModels: () => stringList(field('minimaxCnDisabledModels')),
+    minimaxGlobalModelContextWindows: () => numberMap(field('minimaxGlobalModelContextWindows')),
+    minimaxCnModelContextWindows: () => numberMap(field('minimaxCnModelContextWindows')),
+    minimaxModelAliases: () => stringMap(field('minimaxModelAliases')),
   }
 }
 
@@ -376,6 +420,14 @@ export function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig 
     codebuddyGlobalModelContextWindows: live.codebuddyGlobalModelContextWindows(),
     codebuddyCnModelContextWindows: live.codebuddyCnModelContextWindows(),
     codebuddyModelAliases: live.codebuddyModelAliases(),
+    minimaxEnabled: live.minimaxEnabled(),
+    minimaxRegion: live.minimaxRegion(),
+    minimaxDisplayName: live.minimaxDisplayName(),
+    minimaxGlobalDisabledModels: live.minimaxGlobalDisabledModels(),
+    minimaxCnDisabledModels: live.minimaxCnDisabledModels(),
+    minimaxGlobalModelContextWindows: live.minimaxGlobalModelContextWindows(),
+    minimaxCnModelContextWindows: live.minimaxCnModelContextWindows(),
+    minimaxModelAliases: live.minimaxModelAliases(),
   }
 }
 

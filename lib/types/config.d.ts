@@ -15,7 +15,7 @@
  * @module dsh-agent-sdk-bridge/config
  */
 import z from '@deepseek-ai/schemastery';
-import type { CodeBuddyRegion } from './brand.ts';
+import type { CodeBuddyRegion, MinimaxRegion } from './brand.ts';
 /**
  * The plugin configuration as authored in a profile patch.
  *
@@ -99,6 +99,22 @@ export interface Config {
     codebuddyCnModelContextWindows?: Record<string, number>;
     /** Extra model aliases for CodeBuddy, shared by both regions. */
     codebuddyModelAliases?: Record<string, string>;
+    /** Whether MiniMax Code is served; same semantics as {@link cnEnabled}. */
+    minimaxEnabled?: boolean;
+    /** Which MiniMax Code login region the sessions use. */
+    minimaxRegion?: MinimaxRegion;
+    /** Display name of the MiniMax Code provider group in the picker. */
+    minimaxDisplayName?: string;
+    /** Model ids the user switched OFF for the international region. */
+    minimaxGlobalDisabledModels?: string[];
+    /** Model ids the user switched OFF for the mainland region. */
+    minimaxCnDisabledModels?: string[];
+    /** Per-model context window for the international region, keyed by model id. */
+    minimaxGlobalModelContextWindows?: Record<string, number>;
+    /** Per-model context window for the mainland region, keyed by model id. */
+    minimaxCnModelContextWindows?: Record<string, number>;
+    /** Extra model aliases for MiniMax Code, shared by both regions. */
+    minimaxModelAliases?: Record<string, string>;
     /**
      * Display name of the primary provider group in the model picker.
      */
@@ -190,6 +206,14 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     codebuddyGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
+    minimaxEnabled: z<boolean, boolean, "volatile-defined">;
+    minimaxRegion: z<string, string, "volatile-defined">;
+    minimaxDisplayName: z<string, string, "volatile-defined">;
+    minimaxGlobalDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    minimaxCnDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    minimaxGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    minimaxCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    minimaxModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
@@ -217,6 +241,14 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     codebuddyGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
+    minimaxEnabled: z<boolean, boolean, "volatile-defined">;
+    minimaxRegion: z<string, string, "volatile-defined">;
+    minimaxDisplayName: z<string, string, "volatile-defined">;
+    minimaxGlobalDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    minimaxCnDisabledModels: z<NoInfer<string[]>, NoInfer<string[]>, "volatile-defined">;
+    minimaxGlobalModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    minimaxCnModelContextWindows: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<number, string>>, "volatile-defined">;
+    minimaxModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
@@ -256,6 +288,14 @@ export interface ResolvedConfig {
     codebuddyGlobalModelContextWindows: Readonly<Record<string, number>>;
     codebuddyCnModelContextWindows: Readonly<Record<string, number>>;
     codebuddyModelAliases: Readonly<Record<string, string>>;
+    minimaxEnabled: boolean;
+    minimaxRegion: MinimaxRegion;
+    minimaxDisplayName: string;
+    minimaxGlobalDisabledModels: readonly string[];
+    minimaxCnDisabledModels: readonly string[];
+    minimaxGlobalModelContextWindows: Readonly<Record<string, number>>;
+    minimaxCnModelContextWindows: Readonly<Record<string, number>>;
+    minimaxModelAliases: Readonly<Record<string, string>>;
 }
 /**
  * A parsed config as it arrives at `apply()`: every field wrapped in the
