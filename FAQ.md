@@ -107,6 +107,14 @@ subscription` 拒绝，此时卡片只显示积分，不虚构窗口。额度读
 已读到的账号并给出原因；点击「刷新额度」可重试。凭据过期时先启动一次带该凭据的会话（或重新
 登录），CLI 会自动续期。
 
+**MiniMax 回复到一半切到别的对话，再切回来报 `failed to project session`，提示
+`uncachedInputTokens` / `outputTokens` 需要整数？** 已修复。此前 MiniMax 的用量直接上报了
+按字符估算出的**小数**（例如 `1399.5`），流式时看不出问题，但 DSH 的用量投影用
+`z.number().int().nonnegative()` 校验；重新进入会话、重放这一轮时校验失败，于是整段会话都
+打不开。现在所有用量桶都会向上取整，且 `reasoningTokens` 不会超过 `outputTokens`。
+升级并重启 DSH 后可正常回到该对话；已扫描本机会话历史，没有小数用量被写入，因此不需要手工
+修复历史。
+
 **缓存命中一直显示 0%？** v1.0.5 已修。根因不在映射：CLI 每轮都算出了真实用量，但在把用量帧
 送出来之前会**主动清零四个 token 计数**（`input_tokens` / `output_tokens` /
 `cache_read_input_tokens` / `cache_creation_input_tokens`），只留 `credits` 与

@@ -97,6 +97,12 @@
   矛盾的判定）。`/models` 也会回传 `regionBlocked`，页面据此清掉该区域缓存的模型表，避免把
   别的网络的旧数据当成当前可用的目录；若手动刷新额度后判定恢复为可用，页面会自动重新读取
   模型列表，不需要切区再切回来。
+- **MiniMax 的用量必须是整数**：`estimateTextTokens()` 按脚本计价并返回小数，而 DSH 的用量桶
+  校验是 `z.number().int().nonnegative()`。直接上报小数时，流式回合能跑完，但用量投影会失败；
+  用户切走再回来、会话重放该轮时就会看到 `failed to project session` /
+  `uncachedInputTokens expected int`。所有 MiniMax 用量（warm 回合与旁路冷请求）都统一经
+  `minimaxTurnUsage()` 输出：每个桶 `Math.ceil` 到整数，`reasoningTokens` 再钳制在
+  `outputTokens` 之内。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
 - **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` / `minimaxEnabled` 是结构字段。

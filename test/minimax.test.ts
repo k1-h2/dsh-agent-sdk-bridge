@@ -14,7 +14,7 @@ import {
   MinimaxMcpBridge, MinimaxMcpServer, hostMcpToolName, isHostMcpTool,
   minimaxAuthStatePath, minimaxDataDir, minimaxModelsFromConfigOptions, minimaxSignedIn,
   minimaxUsageFromParts, minimaxUsage, minimaxHostBelongsToOtherRegion,
-  minimaxRegionBlocked, minimaxRegionBlockedCached,
+  minimaxRegionBlocked, minimaxRegionBlockedCached, minimaxTurnUsage,
   invalidateMinimaxRegionAccess, invalidateMinimaxUsage,
 } from '../src/minimax.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../src/minimax-cli.ts'
@@ -400,6 +400,38 @@ describe('MiniMax region availability', () => {
     expect(calls[1]).toContain('/v1/api/user/info')
     invalidateMinimaxRegionAccess()
     invalidateMinimaxUsage()
+  })
+})
+
+describe('MiniMax turn usage', () => {
+  const isWhole = (value: number): boolean => Number.isInteger(value) && value >= 0
+
+  it('emits whole numbers for every bucket', () => {
+    // A CJK reply at 1.77 chars/token yields a fraction; the harness rejects it.
+    const usage = minimaxTurnUsage({ inputChars: 137, outputChars: 91, reasoningChars: 0 })
+    for (const value of [usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens, usage.totalTokens]) {
+      expect(isWhole(value), String(value)).toBe(true)
+    }
+    expect(usage.totalTokens).toBe(usage.inputTokens + usage.outputTokens)
+    expect(usage.outputTokens).toBeGreaterThan(0)
+  })
+
+  it('keeps reasoning inside the output total', () => {
+    const usage = minimaxTurnUsage({ inputChars: 10, outputChars: 7, reasoningChars: 400 })
+    expect(isWhole(usage.reasoningTokens ?? 0)).toBe(true)
+    expect(usage.reasoningTokens).toBeLessThanOrEqual(usage.outputTokens)
+    expect(isWhole(usage.outputTokens)).toBe(true)
+  })
+
+  it('prefers the reported context occupancy over the character estimate', () => {
+    const usage = minimaxTurnUsage({ contextUsed: 14_104, inputChars: 12, outputChars: 2, reasoningChars: 0 })
+    expect(usage.inputTokens).toBe(14_104)
+    expect(usage.totalTokens).toBe(14_104 + usage.outputTokens)
+  })
+
+  it('rounds a fractional context reading up instead of passing it through', () => {
+    const usage = minimaxTurnUsage({ contextUsed: 14_104.2, inputChars: 0, outputChars: 1, reasoningChars: 0 })
+    expect(usage.inputTokens).toBe(14_105)
   })
 })
 

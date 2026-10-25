@@ -21,7 +21,7 @@
  *
  * @module dsh-agent-sdk-bridge/minimax
  */
-import type { GenerateOptions, RequestMessage, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, RequestMessage, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm';
 import type { MinimaxRegion } from './brand.ts';
 import type { Live } from './live.ts';
 /** Default context capacity shown for a MiniMax model that declares none. */
@@ -366,6 +366,13 @@ export declare class MinimaxMcpBridge {
     }[];
     call(name: string, args: Record<string, unknown>): Promise<MinimaxMcpToolResult>;
 }
+/** Build a turn's usage from its character counts and the reported context. */
+export declare function minimaxTurnUsage(counts: {
+    contextUsed?: number;
+    inputChars: number;
+    outputChars: number;
+    reasoningChars: number;
+}): TokenUsage;
 /**
  * One warm MiniMax conversation for a harness session id.
  *

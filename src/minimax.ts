@@ -1718,6 +1718,41 @@ interface TurnState {
   contextUsed?: number
 }
 
+/**
+ * Round one token count up to a whole number.
+ *
+ * The harness validates every usage bucket as `number().int().nonnegative()`.
+ * The text estimator prices by script and therefore returns fractions; a
+ * fractional reading is accepted when it streams but makes the durable usage
+ * projection fail, and the conversation then refuses to load at all (the
+ * "failed to project session" error). Counts must leave this module whole.
+ */
+function wholeTokens(value: number): number {
+  return Math.max(1, Math.ceil(value))
+}
+
+/** Build a turn's usage from its character counts and the reported context. */
+export function minimaxTurnUsage(counts: {
+  contextUsed?: number
+  inputChars: number
+  outputChars: number
+  reasoningChars: number
+}): TokenUsage {
+  const inputTokens = wholeTokens(counts.contextUsed ?? estimateTextTokens(counts.inputChars, 0))
+  const outputTokens = wholeTokens(estimateTextTokens(counts.outputChars + counts.reasoningChars, 0))
+  const reasoningTokens = counts.reasoningChars === 0
+    ? undefined
+    : Math.min(outputTokens, wholeTokens(estimateTextTokens(counts.reasoningChars, 0)))
+  return {
+    inputTokens,
+    outputTokens,
+    ...reasoningTokens === undefined ? {} : { reasoningTokens },
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: inputTokens + outputTokens,
+  }
+}
+
 /** A prompt that asks the model to retry without native tools. */
 const NATIVE_TOOL_CORRECTION = [
   'SYSTEM NOTICE (not from the user):',
@@ -2216,18 +2251,12 @@ export class MinimaxSession {
     }
     // The CLI reports whole-context occupancy, which is the real prompt size;
     // the character estimate is only the fallback for providers that omit it.
-    const inputTokens = turn.contextUsed !== undefined
-      ? Math.max(1, turn.contextUsed)
-      : Math.max(1, estimateTextTokens(turn.inputChars, 0))
-    const outputTokens = Math.max(1, estimateTextTokens(turn.outputChars + turn.reasoningChars, 0))
-    const usage: TokenUsage = {
-      inputTokens,
-      outputTokens,
-      ...turn.reasoningChars === 0 ? {} : { reasoningTokens: Math.max(1, estimateTextTokens(turn.reasoningChars, 0)) },
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      totalTokens: inputTokens + outputTokens,
-    }
+    const usage = minimaxTurnUsage({
+      ...turn.contextUsed === undefined ? {} : { contextUsed: turn.contextUsed },
+      inputChars: turn.inputChars,
+      outputChars: turn.outputChars,
+      reasoningChars: turn.reasoningChars,
+    })
     yield { type: 'usage', usage }
     yield { type: 'finish', reason }
     if (reason.kind !== 'tool-calls' && !this.disposed) {
@@ -2366,9 +2395,10 @@ export async function minimaxColdStream(
       chunks.push({ type: 'text-delta', index: 0, text: text.slice(index, index + 192) })
     }
     chunks.push({ type: 'block-end', index: 0, block: { type: 'text', text } })
-    const inputTokens = Math.max(1, estimateTextTokens(prompt.length, 0))
-    const outputTokens = Math.max(1, estimateTextTokens(text.length, 0))
-    chunks.push({ type: 'usage', usage: { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: inputTokens + outputTokens } })
+    chunks.push({
+      type: 'usage',
+      usage: minimaxTurnUsage({ inputChars: prompt.length, outputChars: text.length, reasoningChars: 0 }),
+    })
     chunks.push({ type: 'finish', reason: { kind: 'stop' } })
     return chunks
   } finally {
