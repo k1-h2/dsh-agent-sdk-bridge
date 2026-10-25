@@ -92,7 +92,7 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
   卸载 CLI（卸载前确认，保留登录凭证），均附实时输出。
 - 再次打开页面时**先显示上次快照**，模型与账户在后台更新，不再每次都停在「正在读取」。
 
-每个 provider 只注册一条路由（`qoder-cn` / `qoder-intl` / `codebuddy` / `minimax`），只服务
+每个 provider 只注册一条路由（`qoder-cn` / `qoder-intl` / `codebuddy` / `minimax-acp`），只服务
 订阅自带的模型；BYOK 自定义模型会被过滤掉。
 
 四个入口是否出现，在**插件 → Agent SDK Bridge → 启用的版本**里控制。关闭后对应的设置页、模型

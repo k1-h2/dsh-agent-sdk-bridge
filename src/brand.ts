@@ -121,7 +121,7 @@ export const CODEBUDDY_BRAND: BrandProfile = {
 export const MINIMAX_BRAND: BrandProfile = {
   id: 'minimax',
   family: 'minimax',
-  provider: 'minimax',
+  provider: 'minimax-acp',
   defaultDisplayName: 'MiniMax Code',
   enabledKey: 'minimaxEnabled',
   sdkPackage: '@agentclientprotocol/sdk',

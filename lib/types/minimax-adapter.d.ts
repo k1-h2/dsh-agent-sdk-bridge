@@ -15,7 +15,7 @@ import { MinimaxAuth } from './minimax.ts';
 import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts';
 import type { Live } from './live.ts';
 /** The MiniMax Code provider route. */
-export declare const MINIMAX_PROVIDER = "minimax";
+export declare const MINIMAX_PROVIDER = "minimax-acp";
 /** Everything the adapter reads lazily from the plugin config. */
 export interface MinimaxAdapterOptions {
     maxSessions?: Live<number>;

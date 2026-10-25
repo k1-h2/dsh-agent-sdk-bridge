@@ -28,7 +28,7 @@ import { readLive, readLiveOptional } from './live.ts'
 import { feedToText, renderInitialFeed } from './render.ts'
 
 /** The MiniMax Code provider route. */
-export const MINIMAX_PROVIDER = 'minimax'
+export const MINIMAX_PROVIDER = 'minimax-acp'
 
 /** Everything the adapter reads lazily from the plugin config. */
 export interface MinimaxAdapterOptions {
