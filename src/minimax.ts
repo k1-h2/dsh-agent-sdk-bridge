@@ -77,6 +77,16 @@ export interface MinimaxMcpToolResult {
   isError?: boolean
 }
 
+/**
+ * One ACP prompt content block.
+ *
+ * ACP defines image blocks as base64 `data` plus a `mimeType`; text blocks are
+ * the historical shape and remain the only kind a text-only feed produces.
+ */
+export type MinimaxPromptBlock =
+  | { type: 'text', text: string }
+  | { type: 'image', data: string, mimeType: string }
+
 /** Login progress and state for one region. */
 export interface MinimaxAuthStatus {
   running: boolean
@@ -555,6 +565,18 @@ async function minimaxAccountCall(
     throw new Error(asString(baseResp?.status_msg) ?? `MiniMax 账号接口错误 ${baseCode}。`)
   }
   return payload
+}
+
+/**
+ * Literal characters in a prompt payload; images contribute pixels, not text.
+ *
+ * The per-turn input estimate must charge text only, exactly as the Qoder path
+ * counts a feed, so sending a picture cannot inflate the reported prompt size.
+ */
+function feedTextLengthOf(prompt: string | readonly MinimaxPromptBlock[] | null): number {
+  if (prompt === null) return 0
+  if (typeof prompt === 'string') return prompt.length
+  return prompt.reduce((total, block) => total + (block.type === 'text' ? block.text.length : 0), 0)
 }
 
 /** One window's numbers, named the way the coding-plan endpoint reports them. */
@@ -1307,12 +1329,21 @@ export class MinimaxAcp {
     this.configOptions = Array.isArray(session.configOptions) ? [...session.configOptions] : []
   }
 
-  /** Run one prompt; resolves when the agent's turn ends. */
-  async prompt(text: string): Promise<{ stopReason: string }> {
+  /**
+   * Run one prompt; resolves when the agent's turn ends.
+   *
+   * ACP carries images as `{ type: 'image', data, mimeType }` blocks next to
+   * text, which is what makes a pasted picture reach the model at all; a plain
+   * string keeps the historical text-only shape.
+   */
+  async prompt(prompt: string | readonly MinimaxPromptBlock[]): Promise<{ stopReason: string }> {
     if (this.conn === null || this.sessionId === undefined) throw new Error('ACP 会话尚未启动。')
+    const blocks: MinimaxPromptBlock[] = typeof prompt === 'string'
+      ? [{ type: 'text', text: prompt }]
+      : [...prompt]
     const response = await this.conn.prompt({
       sessionId: this.sessionId,
-      prompt: [{ type: 'text', text }],
+      prompt: blocks,
     } as any)
     return { stopReason: String(response.stopReason) }
   }
@@ -1915,15 +1946,15 @@ export class MinimaxSession {
     }
   }
 
-  /** Run one harness turn. `feed` is new user text, or null for a continuation. */
-  async *stream(options: GenerateOptions, feed: string | null): AsyncGenerator<StreamChunk> {
+  /** Run one harness turn. `feed` is new user content, or null for a continuation. */
+  async *stream(options: GenerateOptions, feed: string | readonly MinimaxPromptBlock[] | null): AsyncGenerator<StreamChunk> {
     if (this.disposed) throw new Error(`MiniMax session ${this.sessionId} was disposed`)
     if (this.activeTurn) throw new Error(`MiniMax session ${this.sessionId} already has a turn in flight`)
     this.activeTurn = true
     const signal = options.signal
     const turn: TurnState = {
       blockIndex: 0,
-      inputChars: feed?.length ?? 0,
+      inputChars: feedTextLengthOf(feed),
       outputChars: 0,
       reasoningChars: 0,
     }
@@ -1936,7 +1967,7 @@ export class MinimaxSession {
       if (!this.promptInFlight) {
         await this.startPrompt(feed ?? '')
         this.awaitingToolResults = false
-      } else if (feed !== null && feed.length > 0 && !this.awaitingToolResults) {
+      } else if (feed !== null && feedTextLengthOf(feed) > 0 && !this.awaitingToolResults) {
         throw new Error('MiniMax 会话正忙：上一轮尚未结束。')
       }
 
@@ -2160,12 +2191,12 @@ export class MinimaxSession {
     }
   }
 
-  private async startPrompt(text: string): Promise<void> {
+  private async startPrompt(prompt: string | readonly MinimaxPromptBlock[]): Promise<void> {
     const acp = this.acp
     if (acp === null) throw new Error('MiniMax ACP 尚未启动。')
     this.promptInFlight = true
     this.cancelSent = false
-    void this.launchPrompt(acp, text, 0)
+    void this.launchPrompt(acp, prompt, 0)
   }
 
   /**
@@ -2177,9 +2208,13 @@ export class MinimaxSession {
    * correction is sent immediately after such a cancel, so it is retried with
    * a short backoff instead of being reported as a failed turn.
    */
-  private async launchPrompt(acp: MinimaxAcp, text: string, attempt: number): Promise<void> {
+  private async launchPrompt(
+    acp: MinimaxAcp,
+    prompt: string | readonly MinimaxPromptBlock[],
+    attempt: number,
+  ): Promise<void> {
     try {
-      const response = await acp.prompt(text)
+      const response = await acp.prompt(prompt)
       this.events.push({ kind: 'prompt-done', stopReason: response.stopReason })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -2201,7 +2236,7 @@ export class MinimaxSession {
       if (retryable && attempt < 4 && !this.disposed && this.acp === acp) {
         await new Promise(resolve => setTimeout(resolve, 200 * 2 ** attempt))
         if (!this.disposed && this.acp === acp) {
-          await this.launchPrompt(acp, text, attempt + 1)
+          await this.launchPrompt(acp, prompt, attempt + 1)
           return
         }
       }

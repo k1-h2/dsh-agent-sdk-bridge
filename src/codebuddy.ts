@@ -27,7 +27,37 @@ import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from './sdk.ts'
-import type { ToolResultPayload } from './session.ts'
+import type { ChannelContent, ToolResultPayload } from './session.ts'
+
+/**
+ * Literal characters in a channel payload; images contribute pixels, not text.
+ *
+ * The per-turn input estimate charges text only, matching how the Qoder path
+ * counts a feed, so a picture cannot inflate the reported prompt size.
+ */
+function contentChars(content: readonly ChannelContent[]): number {
+  return content.reduce((total, block) => total + (block.type === 'text' ? block.text.length : 0), 0)
+}
+
+/**
+ * Wrap one turn's content the way the SDK's `send()` expects it.
+ *
+ * A plain string keeps the historical shape; image turns are wrapped in a
+ * `UserMessage`, because a bare `ContentBlock[]` is not accepted and dropping
+ * the wrapper silently loses the picture.
+ */
+function toCodeBuddyUserMessage(
+  sessionId: string,
+  content: string | ChannelContent[],
+): string | UserMessage {
+  if (typeof content === 'string') return content
+  return {
+    type: 'user',
+    session_id: sessionId,
+    message: { role: 'user', content: content as never },
+    parent_tool_use_id: null,
+  }
+}
 import { MCP_SERVER_NAME, ToolResultPairing, TurnQueue } from './session.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
 
@@ -911,8 +941,8 @@ export class CodeBuddySession {
     this.pairing.beginHostRequest(delivered, freshUserTurn)
   }
 
-  /** Run one host turn; `feed` is new user text, or null for a tool continuation. */
-  async *stream(options: GenerateOptions, feed: string | null): AsyncGenerator<StreamChunk> {
+  /** Run one host turn; `feed` is new user content, or null for a tool continuation. */
+  async *stream(options: GenerateOptions, feed: string | ChannelContent[] | null): AsyncGenerator<StreamChunk> {
     if (this.queue !== null) throw new Error(`CodeBuddy session ${this.sessionId} already has a turn in flight`)
     if (this.disposed) throw new Error(`CodeBuddy session ${this.sessionId} was disposed`)
     const session = await this.ensureStarted()
@@ -931,8 +961,13 @@ export class CodeBuddySession {
       // keeps the next prompt on the model the host just resolved.
       await session.setModel(this.model)
       if (feed !== null && feed.length > 0) {
-        this.inputChars += feed.length
-        await session.send(feed)
+        const content = typeof feed === 'string'
+          ? feed
+          : feed.filter(block => block.type !== 'text' || block.text.length > 0)
+        if (content.length > 0) {
+          this.inputChars += typeof content === 'string' ? content.length : contentChars(content)
+          await session.send(toCodeBuddyUserMessage(this.sessionId, content))
+        }
       }
       void this.consume(session)
       for await (const item of this.queue) {

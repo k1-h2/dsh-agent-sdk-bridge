@@ -40,8 +40,7 @@ export function imageRefs(blocks: readonly ContentBlock[]): ImageAttachmentRef[]
 }
 
 /** Render one content-block list as plain text; non-text blocks get handles. */
-export function renderBlocks(blocks: readonly ContentBlock[]): string {
-  const parts: string[] = []
+export function renderBlocks(blocks: readonly ContentBlock[]): string {  const parts: string[] = []
   for (const block of blocks) {
     switch (block.type) {
       case 'text': parts.push(block.text); break
@@ -165,6 +164,40 @@ export function feedToText(feed: Feed): string {
     .map(part => part.type === 'text' ? part.text : textOnlyImageText(part.attachment))
     .filter(text => text.length > 0)
     .join('\n\n')
+}
+
+/** One feed element after image bytes have been resolved (base64). */
+export type ResolvedFeedPart =
+  | { type: 'text', text: string }
+  | { type: 'image', data: string, mediaType: string }
+  | { type: 'image-unreadable', attachment: ImageAttachmentRef }
+
+/**
+ * Split a feed into text and resolved images for providers with a vision API.
+ *
+ * The two non-Qoder adapters (CodeBuddy, MiniMax) speak their own content-block
+ * shapes, so this returns a neutral list rather than a provider shape: text
+ * parts pass through, an image uses its bytes when the host could read them,
+ * and an unreadable image keeps a note naming what was dropped instead of
+ * silently disappearing from the prompt.
+ */
+export function resolvedFeedParts(feed: Feed, images: ReadonlyMap<string, { data: string, mediaType: string }>): ResolvedFeedPart[] {
+  const parts: ResolvedFeedPart[] = []
+  if (typeof feed === 'string') {
+    if (feed.length > 0) parts.push({ type: 'text', text: feed })
+    return parts
+  }
+  for (const part of feed) {
+    if (part.type === 'text') {
+      if (part.text.length > 0) parts.push({ type: 'text', text: part.text })
+      continue
+    }
+    const resolved = images.get(String(part.attachment.attachmentId))
+    parts.push(resolved === undefined
+      ? { type: 'image-unreadable', attachment: part.attachment }
+      : { type: 'image', data: resolved.data, mediaType: resolved.mediaType })
+  }
+  return parts
 }
 
 /** Literal characters in a feed; images contribute their pixels, not text. */

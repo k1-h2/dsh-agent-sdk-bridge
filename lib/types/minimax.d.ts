@@ -54,6 +54,20 @@ export interface MinimaxMcpToolResult {
     }[];
     isError?: boolean;
 }
+/**
+ * One ACP prompt content block.
+ *
+ * ACP defines image blocks as base64 `data` plus a `mimeType`; text blocks are
+ * the historical shape and remain the only kind a text-only feed produces.
+ */
+export type MinimaxPromptBlock = {
+    type: 'text';
+    text: string;
+} | {
+    type: 'image';
+    data: string;
+    mimeType: string;
+};
 /** Login progress and state for one region. */
 export interface MinimaxAuthStatus {
     running: boolean;
@@ -290,8 +304,14 @@ export declare class MinimaxAcp {
     get currentModel(): string | undefined;
     /** Start the process and create one ACP session. */
     start(): Promise<void>;
-    /** Run one prompt; resolves when the agent's turn ends. */
-    prompt(text: string): Promise<{
+    /**
+     * Run one prompt; resolves when the agent's turn ends.
+     *
+     * ACP carries images as `{ type: 'image', data, mimeType }` blocks next to
+     * text, which is what makes a pasted picture reach the model at all; a plain
+     * string keeps the historical text-only shape.
+     */
+    prompt(prompt: string | readonly MinimaxPromptBlock[]): Promise<{
         stopReason: string;
     }>;
     /** Ask the agent to stop the active turn. */
@@ -454,8 +474,8 @@ export declare class MinimaxSession {
         content?: unknown;
         isError?: boolean;
     }[]): void;
-    /** Run one harness turn. `feed` is new user text, or null for a continuation. */
-    stream(options: GenerateOptions, feed: string | null): AsyncGenerator<StreamChunk>;
+    /** Run one harness turn. `feed` is new user content, or null for a continuation. */
+    stream(options: GenerateOptions, feed: string | readonly MinimaxPromptBlock[] | null): AsyncGenerator<StreamChunk>;
     /** Tear the ACP process down; parked handlers settle with a cancellation. */
     close(): void;
     private ensureStarted;

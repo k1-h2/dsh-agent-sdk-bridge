@@ -13,6 +13,7 @@ import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelIn
 import type { CodeBuddyRegion } from './brand.ts';
 import { CodeBuddyAuth } from './codebuddy.ts';
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts';
+import type { ImageRequestReader } from './adapter.ts';
 import type { Live } from './live.ts';
 /** The CodeBuddy provider route. */
 export declare const CODEBUDDY_PROVIDER = "codebuddy";
@@ -32,6 +33,11 @@ export interface CodeBuddyAdapterOptions {
     /** Per-region context-window overrides, keyed by model id. */
     modelContextWindows?: (region: CodeBuddyRegion) => Readonly<Record<string, number>>;
     modelAliases?: Live<Readonly<Record<string, string>>>;
+    /**
+     * Reads image attachment bytes. Absent (a deployment with no attachment
+     * store) → images degrade to their handle text instead of failing the turn.
+     */
+    readImage?: ImageRequestReader;
 }
 /** Map a harness-side id onto a CodeBuddy model value. */
 export declare function resolveCodeBuddyModelId(model: string, aliases?: Readonly<Record<string, string>>): string;
@@ -64,6 +70,24 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     startLogin(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['start']>;
     logout(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['logout']>;
     isModelDisabled(id: string, region?: CodeBuddyRegion): boolean;
+    /** Whether the resolved model accepts images (drives whether pixels are sent). */
+    private modelVision;
+    /**
+     * Resolve a feed's images into base64 for the CLI's vision blocks.
+     *
+     * Only references the host can actually read become pixels; the rest keep
+     * their handle text, so one unreadable attachment degrades that part of the
+     * prompt instead of failing the whole turn.
+     */
+    private resolveFeedImages;
+    /**
+     * Turn a feed into what one CLI turn receives.
+     *
+     * A text-only feed stays a plain string (the historical shape). A feed with
+     * readable images becomes the SDK's `ContentBlock[]`, because that is the
+     * only shape the CLI sends to the model as pixels.
+     */
+    private buildFeed;
     contextWindowFor(id: string, region?: CodeBuddyRegion): number | undefined;
     listModels(provider: string): Promise<readonly LlmModelInfo[]>;
     resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;

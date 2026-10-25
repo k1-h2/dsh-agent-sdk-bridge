@@ -16,6 +16,7 @@ import type { RawLanguageModel } from '@tencent-ai/agent-sdk';
 import type { CodeBuddyRegion } from './brand.ts';
 import { CodeBuddyStateStore } from './codebuddy-state.ts';
 import type { Live } from './live.ts';
+import type { ChannelContent } from './session.ts';
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
 export declare const CODEBUDDY_DEFAULT_CONTEXT_WINDOW = 200000;
 /** Default output cap when the catalog declares none. */
@@ -254,8 +255,8 @@ export declare class CodeBuddySession {
         content?: unknown;
         isError?: boolean;
     }[]): void;
-    /** Run one host turn; `feed` is new user text, or null for a tool continuation. */
-    stream(options: GenerateOptions, feed: string | null): AsyncGenerator<StreamChunk>;
+    /** Run one host turn; `feed` is new user content, or null for a tool continuation. */
+    stream(options: GenerateOptions, feed: string | ChannelContent[] | null): AsyncGenerator<StreamChunk>;
     /** Tear the inner CLI down; parked handlers settle with a cancellation. */
     close(): void;
     private ensureStarted;

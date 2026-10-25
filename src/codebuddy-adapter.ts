@@ -14,13 +14,17 @@ import type {
   GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo,
   PreparedAdapterCall, RequestMessage, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import { textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type { CodeBuddyRegion } from './brand.ts'
 import { codeBuddyColdStream, CodeBuddyAccountReader, CodeBuddyAuth, CodeBuddyCatalog, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './codebuddy.ts'
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts'
 import { reasoningInfo, planContinuation } from './adapter.ts'
+import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
-import { feedToText, renderInitialFeed } from './render.ts'
+import type { Feed } from './render.ts'
+import { feedImageRefs, feedToText, renderInitialFeed, resolvedFeedParts } from './render.ts'
+import type { ChannelContent } from './session.ts'
 
 /** The CodeBuddy provider route. */
 export const CODEBUDDY_PROVIDER = 'codebuddy'
@@ -41,6 +45,11 @@ export interface CodeBuddyAdapterOptions {
   /** Per-region context-window overrides, keyed by model id. */
   modelContextWindows?: (region: CodeBuddyRegion) => Readonly<Record<string, number>>
   modelAliases?: Live<Readonly<Record<string, string>>>
+  /**
+   * Reads image attachment bytes. Absent (a deployment with no attachment
+   * store) → images degrade to their handle text instead of failing the turn.
+   */
+  readImage?: ImageRequestReader
 }
 
 const NO_MODELS: readonly string[] = []
@@ -178,6 +187,78 @@ export class CodeBuddyAdapter extends LlmAdapter {
     return this.disabledFor(region).has(id)
   }
 
+  /** Whether the resolved model accepts images (drives whether pixels are sent). */
+  private async modelVision(model: string): Promise<boolean> {
+    const target = resolveCodeBuddyModelId(model, this.aliases)
+    const live = (await this.catalog.models().catch(() => [])).find(entry => entry.id === target)
+    return live?.vision === true
+  }
+
+  /**
+   * Resolve a feed's images into base64 for the CLI's vision blocks.
+   *
+   * Only references the host can actually read become pixels; the rest keep
+   * their handle text, so one unreadable attachment degrades that part of the
+   * prompt instead of failing the whole turn.
+   */
+  private async resolveFeedImages(
+    feed: Feed,
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
+    const map = new Map<string, { data: string, mediaType: string }>()
+    const readImage = this.options.readImage
+    if (!vision || readImage === undefined) return map
+    for (const ref of feedImageRefs(feed)) {
+      const key = String(ref.attachmentId)
+      if (map.has(key)) continue
+      try {
+        const image = await readImage(ref, signal)
+        if (image !== undefined) {
+          map.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
+        }
+      } catch {
+        // Degrade this attachment to its handle text.
+      }
+    }
+    return map
+  }
+
+  /**
+   * Turn a feed into what one CLI turn receives.
+   *
+   * A text-only feed stays a plain string (the historical shape). A feed with
+   * readable images becomes the SDK's `ContentBlock[]`, because that is the
+   * only shape the CLI sends to the model as pixels.
+   */
+  private async buildFeed(
+    feed: Feed,
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<string | ChannelContent[]> {
+    if (typeof feed === 'string') return feed
+    if (!vision) return feedToText(feed)
+    const images = await this.resolveFeedImages(feed, vision, signal)
+    const parts = resolvedFeedParts(feed, images)
+    if (!parts.some(part => part.type !== 'text')) return parts.map(part => part.type === 'text' ? part.text : '').join('\n\n')
+    const content: ChannelContent[] = []
+    for (const part of parts) {
+      if (part.type === 'text') {
+        content.push({ type: 'text', text: part.text })
+        continue
+      }
+      if (part.type === 'image-unreadable') {
+        content.push({ type: 'text', text: textOnlyImageText(part.attachment) })
+        continue
+      }
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: part.mediaType, data: part.data },
+      })
+    }
+    return content
+  }
+
   contextWindowFor(id: string, region: CodeBuddyRegion = this.region): number | undefined {
     return this.options.modelContextWindows?.(region)[id]
   }
@@ -265,7 +346,10 @@ export class CodeBuddyAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const feed = plan.feed === null ? null : feedToText(plan.feed)
+    const vision = await this.modelVision(options.model)
+    const feed = plan.feed === null
+      ? null
+      : await this.buildFeed(plan.feed, vision, options.signal)
     yield* session.stream(options, feed)
   }
 
@@ -280,7 +364,12 @@ export class CodeBuddyAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const feed = feedToText(renderInitialFeed(undefined, options.messages))
+    const vision = await this.modelVision(options.model)
+    const feed = await this.buildFeed(
+      renderInitialFeed(undefined, options.messages),
+      vision,
+      options.signal,
+    )
     yield* session.stream(options, feed)
   }
 

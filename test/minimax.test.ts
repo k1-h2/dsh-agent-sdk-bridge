@@ -19,6 +19,7 @@ import {
 } from '../src/minimax.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../src/minimax-cli.ts'
 import { resolveMinimaxModelId } from '../src/minimax-adapter.ts'
+import { resolvedFeedParts } from '../src/render.ts'
 
 const RESTORE: (() => void)[] = []
 
@@ -400,6 +401,33 @@ describe('MiniMax region availability', () => {
     expect(calls[1]).toContain('/v1/api/user/info')
     invalidateMinimaxRegionAccess()
     invalidateMinimaxUsage()
+  })
+})
+
+describe('MiniMax prompt content', () => {
+  const attachment = { attachmentId: 'img-1', mediaType: 'image/png', width: 4, height: 4 } as any
+
+  it('passes a resolved image through as an image part', () => {
+    const parts = resolvedFeedParts(
+      [
+        { type: 'text', text: '这张图是什么' },
+        { type: 'image', attachment },
+      ],
+      new Map([['img-1', { data: 'QUJD', mediaType: 'image/png' }]]),
+    )
+    expect(parts).toEqual([
+      { type: 'text', text: '这张图是什么' },
+      { type: 'image', data: 'QUJD', mediaType: 'image/png' },
+    ])
+  })
+
+  it('marks an unreadable image instead of dropping it silently', () => {
+    const parts = resolvedFeedParts([{ type: 'image', attachment }], new Map())
+    expect(parts).toEqual([{ type: 'image-unreadable', attachment }])
+  })
+
+  it('keeps a text-only feed free of image parts', () => {
+    expect(resolvedFeedParts('只有文字', new Map())).toEqual([{ type: 'text', text: '只有文字' }])
   })
 })
 

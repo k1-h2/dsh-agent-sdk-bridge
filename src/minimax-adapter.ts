@@ -22,12 +22,15 @@ import {
   minimaxColdStream, minimaxRegionBlockMessage, minimaxRegionBlocked,
   minimaxRegionBlockedCached, minimaxSignedIn, minimaxUsage,
 } from './minimax.ts'
-import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts'
+import { textOnlyImageText } from '@deepseek-ai/dsh-llm'
+import type { MinimaxModel, MinimaxPromptBlock, MinimaxUsageSnapshot } from './minimax.ts'
 import { resolveMinimaxCli } from './minimax-cli.ts'
 import { reasoningInfo, planContinuation } from './adapter.ts'
+import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
-import { feedToText, renderInitialFeed } from './render.ts'
+import type { Feed } from './render.ts'
+import { feedImageRefs, feedToText, renderInitialFeed, resolvedFeedParts } from './render.ts'
 
 /** The MiniMax Code provider route. */
 export const MINIMAX_PROVIDER = 'minimax-acp'
@@ -48,6 +51,11 @@ export interface MinimaxAdapterOptions {
   /** Per-region context-window overrides, keyed by model id. */
   modelContextWindows?: (region: MinimaxRegion) => Readonly<Record<string, number>>
   modelAliases?: Live<Readonly<Record<string, string>>>
+  /**
+   * Reads image attachment bytes. Absent (a deployment with no attachment
+   * store) → images degrade to their handle text instead of failing the turn.
+   */
+  readImage?: ImageRequestReader
 }
 
 const NO_MODELS: readonly string[] = []
@@ -335,7 +343,10 @@ export class MinimaxAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const feed = plan.feed === null ? null : feedToText(plan.feed)
+    const vision = await this.modelVision(model, region)
+    const feed = plan.feed === null
+      ? null
+      : await this.buildFeed(plan.feed, vision, options.signal)
     yield* session.stream(options, feed)
   }
 
@@ -354,8 +365,70 @@ export class MinimaxAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const feed = feedToText(renderInitialFeed(undefined, options.messages))
+    const vision = await this.modelVision(model, region)
+    const feed = await this.buildFeed(
+      renderInitialFeed(undefined, options.messages),
+      vision,
+      options.signal,
+    )
     yield* session.stream(options, feed)
+  }
+
+  /** Whether the resolved model accepts images (drives whether pixels are sent). */
+  private async modelVision(model: string, region: MinimaxRegion): Promise<boolean> {
+    const target = resolveMinimaxModelId(model, this.aliases)
+    const live = (await this.catalog.models(region).catch(() => [])).find(entry => entry.id === target)
+    return live?.vision === true
+  }
+
+  /**
+   * Turn a feed into what one ACP prompt carries.
+   *
+   * A text-only feed stays a plain string (the historical shape). A feed with
+   * readable images becomes ACP content blocks, because an image block is the
+   * only thing the agent receives as pixels. An image the host could not read
+   * keeps its handle text, so it degrades one part instead of failing the turn.
+   */
+  private async buildFeed(
+    feed: Feed,
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<string | MinimaxPromptBlock[]> {
+    if (typeof feed === 'string') return feed
+    if (!vision) return feedToText(feed)
+    const images = new Map<string, { data: string, mediaType: string }>()
+    const readImage = this.options.readImage
+    if (readImage !== undefined) {
+      for (const ref of feedImageRefs(feed)) {
+        const key = String(ref.attachmentId)
+        if (images.has(key)) continue
+        try {
+          const image = await readImage(ref, signal)
+          if (image !== undefined) {
+            images.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
+          }
+        } catch {
+          // Degrade this attachment to its handle text.
+        }
+      }
+    }
+    const parts = resolvedFeedParts(feed, images)
+    if (!parts.some(part => part.type !== 'text')) {
+      return parts.map(part => part.type === 'text' ? part.text : '').join('\n\n')
+    }
+    const content: MinimaxPromptBlock[] = []
+    for (const part of parts) {
+      if (part.type === 'text') {
+        content.push({ type: 'text', text: part.text })
+        continue
+      }
+      if (part.type === 'image-unreadable') {
+        content.push({ type: 'text', text: textOnlyImageText(part.attachment) })
+        continue
+      }
+      content.push({ type: 'image', data: part.data, mimeType: part.mediaType })
+    }
+    return content
   }
 
   private cwdOf(options: GenerateOptions): string | undefined {

@@ -13,6 +13,7 @@ import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelIn
 import type { MinimaxRegion } from './brand.ts';
 import { MinimaxAuth } from './minimax.ts';
 import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts';
+import type { ImageRequestReader } from './adapter.ts';
 import type { Live } from './live.ts';
 /** The MiniMax Code provider route. */
 export declare const MINIMAX_PROVIDER = "minimax-acp";
@@ -32,6 +33,11 @@ export interface MinimaxAdapterOptions {
     /** Per-region context-window overrides, keyed by model id. */
     modelContextWindows?: (region: MinimaxRegion) => Readonly<Record<string, number>>;
     modelAliases?: Live<Readonly<Record<string, string>>>;
+    /**
+     * Reads image attachment bytes. Absent (a deployment with no attachment
+     * store) → images degrade to their handle text instead of failing the turn.
+     */
+    readImage?: ImageRequestReader;
 }
 /** Map a harness-side id onto an ACP model value. */
 export declare function resolveMinimaxModelId(model: string, aliases?: Readonly<Record<string, string>>): string;
@@ -81,6 +87,17 @@ export declare class MinimaxAdapter extends LlmAdapter {
     stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
     private dispatch;
     private firstTurn;
+    /** Whether the resolved model accepts images (drives whether pixels are sent). */
+    private modelVision;
+    /**
+     * Turn a feed into what one ACP prompt carries.
+     *
+     * A text-only feed stays a plain string (the historical shape). A feed with
+     * readable images becomes ACP content blocks, because an image block is the
+     * only thing the agent receives as pixels. An image the host could not read
+     * keeps its handle text, so it degrades one part instead of failing the turn.
+     */
+    private buildFeed;
     private cwdOf;
     close(): void;
 }

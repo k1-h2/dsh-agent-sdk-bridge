@@ -16,6 +16,7 @@ const fake = vi.hoisted(() => ({
   created: [] as any[],
   registered: [] as string[],
   messages: [] as any[],
+  sent: [] as any[],
 }))
 
 vi.mock('../src/sdk.ts', () => ({
@@ -31,7 +32,7 @@ vi.mock('../src/sdk.ts', () => ({
       return {
         connect: async () => {},
         setModel: async () => {},
-        send: async () => {},
+        send: async (message: any) => { fake.sent.push(message) },
         interrupt: async () => {},
         close: () => {},
         stream: async function* () {
@@ -51,10 +52,10 @@ const { CodeBuddySession } = await import('../src/codebuddy.ts')
 
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
 
-function drain(session: InstanceType<typeof CodeBuddySession>): Promise<any[]> {
+function drain(session: InstanceType<typeof CodeBuddySession>, feed: any = null): Promise<any[]> {
   return (async () => {
     const chunks: any[] = []
-    for await (const chunk of session.stream({ messages: [], model: 'model' } as any, null)) chunks.push(chunk)
+    for await (const chunk of session.stream({ messages: [], model: 'model' } as any, feed)) chunks.push(chunk)
     return chunks
   })()
 }
@@ -100,6 +101,43 @@ describe('CodeBuddySession host tools', () => {
 
     expect(chunks.some(chunk => chunk.type === 'tool-call-delta')).toBe(false)
     expect(chunks.some(chunk => chunk.type === 'block-start' && chunk.blockType === 'tool-call')).toBe(false)
+    session.close()
+  })
+
+  it('sends a pasted image as a vision content block', async () => {
+    fake.created.length = 0
+    fake.sent.length = 0
+    fake.messages = [{ type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false }]
+
+    const session = new CodeBuddySession('s-image', 'model')
+    session.configure('global', 'model')
+    const feed = [
+      { type: 'text', text: '看看这张图' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    ]
+    await drain(session, feed)
+
+    // A bare ContentBlock[] is not accepted by send(); it must be wrapped, or
+    // the picture silently disappears from the prompt.
+    const sent = fake.sent[0]
+    expect(sent).toMatchObject({ type: 'user', message: { role: 'user' } })
+    expect(sent.message.content).toEqual([
+      { type: 'text', text: '看看这张图' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    ])
+    session.close()
+  })
+
+  it('keeps a text-only turn in the plain string shape', async () => {
+    fake.created.length = 0
+    fake.sent.length = 0
+    fake.messages = [{ type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false }]
+
+    const session = new CodeBuddySession('s-text', 'model')
+    session.configure('global', 'model')
+    await drain(session, '只有文字')
+
+    expect(fake.sent[0]).toBe('只有文字')
     session.close()
   })
 

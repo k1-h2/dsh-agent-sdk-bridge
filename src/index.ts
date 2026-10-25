@@ -278,6 +278,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
         ? live.codebuddyCnModelContextWindows()
         : live.codebuddyGlobalModelContextWindows(),
       modelAliases: live.codebuddyModelAliases,
+      readImage: shared.readImage,
     }),
     minimax: new MinimaxAdapter({
       maxSessions: live.maxSessions,
@@ -296,6 +297,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
         ? live.minimaxCnModelContextWindows()
         : live.minimaxGlobalModelContextWindows(),
       modelAliases: live.minimaxModelAliases,
+      readImage: shared.readImage,
     }),
   }
 
