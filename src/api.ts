@@ -227,6 +227,7 @@ export async function handleApi(
         // the other login: a harmless extra field for the Qoder brands.
         ...region === undefined ? {} : { region },
         ...signedIn === undefined ? {} : { signedIn },
+        ...minimax === undefined ? {} : { regionBlocked: minimax.regionBlocked(region) },
         ...notice === undefined ? {} : { notice },
       })
       return

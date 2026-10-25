@@ -79,6 +79,7 @@ function minimaxAdapter(): MinimaxAdapter {
     contextWindowFor: () => undefined,
     isModelDisabled: () => false,
     isSignedIn: () => true,
+    regionBlocked: () => false,
     catalogError: () => undefined,
     usageInfo: async (_fresh: boolean, region?: string) => ({ at: 1, region, installed: true }),
     invalidateCatalog: () => {},
@@ -237,6 +238,27 @@ describe('settings API brand routing', () => {
     expect(r.status()).toBe(200)
     expect(r.body()).toMatchObject({ brand: 'minimax', signedIn: false, models: [], notice: '请先登录 MiniMax Code' })
     expect(catalogReads).toBe(0)
+  })
+
+  it('passes a blocked region through and offers no models', async () => {
+    const blocked = { ...(ADAPTERS.minimax as unknown as Record<string, unknown>) }
+    blocked.regionBlocked = () => true
+    blocked.catalogError = () => '本机 IP 不在 MiniMax 国际站的服务区域'
+    blocked.describeCatalog = async () => []
+    const r = response()
+    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=global`), r.res, {
+      ...ADAPTERS,
+      minimax: blocked as unknown as MinimaxAdapter,
+    })
+    expect(r.status()).toBe(200)
+    expect(r.body()).toMatchObject({
+      brand: 'minimax',
+      region: 'global',
+      signedIn: true,
+      regionBlocked: true,
+      models: [],
+      notice: expect.stringContaining('IP'),
+    })
   })
 
   it('starts and ends a MiniMax login per region', async () => {

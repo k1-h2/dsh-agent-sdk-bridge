@@ -13,7 +13,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   MinimaxMcpBridge, MinimaxMcpServer, hostMcpToolName, isHostMcpTool,
   minimaxAuthStatePath, minimaxDataDir, minimaxModelsFromConfigOptions, minimaxSignedIn,
-  minimaxUsageFromParts,
+  minimaxUsageFromParts, minimaxUsage, minimaxHostBelongsToOtherRegion,
+  invalidateMinimaxRegionAccess, invalidateMinimaxUsage,
 } from '../src/minimax.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../src/minimax-cli.ts'
 import { resolveMinimaxModelId } from '../src/minimax-adapter.ts'
@@ -269,6 +270,93 @@ describe('MiniMax account and quota snapshot', () => {
       remains: { base_resp: { status_code: 1004, status_msg: 'login fail' }, model_remains: [] },
     })
     expect(rejected.windows).toBeUndefined()
+  })
+})
+
+function writeMiniMaxAuth(dir: string, region: 'cn' | 'en', token = 'mmoat-test'): void {
+  const base = join(dir, 'auth', 'prod', region, 'mcode-public')
+  mkdirSync(base, { recursive: true })
+  writeFileSync(join(base, 'auth.json'), JSON.stringify({
+    records: { 'com.minimax.mcode.oauth.prod.test': { accessToken: token } },
+  }), 'utf8')
+  writeFileSync(join(base, 'auth-state.json'), JSON.stringify({
+    status: 'authenticated',
+    region,
+  }), 'utf8')
+}
+
+describe('MiniMax region availability', () => {
+  it('recognises the edge redirect between the two sites', () => {
+    expect(minimaxHostBelongsToOtherRegion('global', 'https://agent.minimaxi.com/')).toBe(true)
+    expect(minimaxHostBelongsToOtherRegion('global', 'https://platform.minimaxi.com/x')).toBe(true)
+    expect(minimaxHostBelongsToOtherRegion('global', 'https://agent.minimax.io/')).toBe(false)
+    expect(minimaxHostBelongsToOtherRegion('cn', 'https://platform.minimax.io/')).toBe(true)
+    expect(minimaxHostBelongsToOtherRegion('cn', 'https://www.minimaxi.com/')).toBe(false)
+    expect(minimaxHostBelongsToOtherRegion('global', 'not a url')).toBe(false)
+  })
+
+  it('reports a blocked region without inventing account data', async () => {
+    const dir = scope()
+    setEnv('MINIMAX_DATA_DIR', dir)
+    setEnv('MAVIS_BUILD_ENV', undefined)
+    writeMiniMaxAuth(dir, 'en')
+    invalidateMinimaxUsage()
+    invalidateMinimaxRegionAccess()
+    const calls: string[] = []
+    const fetchImpl = (async input => {
+      const url = String(input)
+      calls.push(url)
+      if (new URL(url).pathname === '/') {
+        return new Response(null, { status: 307, headers: { location: 'https://agent.minimaxi.com/' } })
+      }
+      throw new Error(`unexpected ${url}`)
+    }) as unknown as typeof fetch
+
+    const snapshot = await minimaxUsage('global', { fresh: true, fetchImpl })
+
+    expect(snapshot).toMatchObject({ region: 'global', signedIn: true, regionBlocked: true })
+    expect(snapshot.error).toContain('IP')
+    expect(snapshot.account).toBeUndefined()
+    expect(snapshot.plan).toBeUndefined()
+    expect(snapshot.credits).toBeUndefined()
+    expect(snapshot.windows).toBeUndefined()
+    // The probe is enough; no account endpoint is called after a refusal.
+    expect(calls).toHaveLength(1)
+    invalidateMinimaxRegionAccess()
+    invalidateMinimaxUsage()
+  })
+
+  it('turns an account-endpoint redirect into the same verdict', async () => {
+    const dir = scope()
+    setEnv('MINIMAX_DATA_DIR', dir)
+    setEnv('MAVIS_BUILD_ENV', undefined)
+    writeMiniMaxAuth(dir, 'en')
+    invalidateMinimaxUsage()
+    invalidateMinimaxRegionAccess()
+    const calls: string[] = []
+    const fetchImpl = (async input => {
+      const url = String(input)
+      calls.push(url)
+      const parsed = new URL(url)
+      if (parsed.pathname === '/') return new Response(null, { status: 200 })
+      if (parsed.pathname === '/v1/api/user/info') {
+        return new Response(null, {
+          status: 307,
+          headers: { location: 'https://agent.minimaxi.com/v1/api/user/info' },
+        })
+      }
+      throw new Error(`unexpected ${url}`)
+    }) as unknown as typeof fetch
+
+    const snapshot = await minimaxUsage('global', { fresh: true, fetchImpl })
+
+    expect(snapshot).toMatchObject({ region: 'global', signedIn: true, regionBlocked: true })
+    expect(snapshot.error).toContain('IP')
+    expect(snapshot.account).toBeUndefined()
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+    expect(calls[1]).toContain('/v1/api/user/info')
+    invalidateMinimaxRegionAccess()
+    invalidateMinimaxUsage()
   })
 })
 

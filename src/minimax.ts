@@ -139,6 +139,8 @@ export interface MinimaxUsageSnapshot {
   signedIn: boolean
   /** Whether the `mcode` executable was found. */
   installed: boolean
+  /** The site refused this machine's network and redirected to the other one. */
+  regionBlocked?: boolean
   error?: string
   account?: MinimaxAccountInfo
   plan?: MinimaxPlanInfo
@@ -284,6 +286,123 @@ const MINIMAX_ACCOUNT_SALT = 'I*7Cf%WZ#S&%1RlZJ&C2'
 const MINIMAX_USAGE_TIMEOUT_MS = 15_000
 /** How long one quota reading stays fresh. */
 export const MINIMAX_USAGE_CACHE_TTL_MS = 60_000
+/** Bound for one region-reachability probe. */
+const MINIMAX_REGION_PROBE_TIMEOUT_MS = 5_000
+/** How long one reachability verdict stays fresh. */
+const MINIMAX_REGION_ACCESS_TTL_MS = 30_000
+
+/** Domains the two sites serve their API and console from. */
+const MINIMAX_INTL_DOMAIN = 'minimax.io'
+const MINIMAX_CN_DOMAIN = 'minimaxi.com'
+
+function hostMatches(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`)
+}
+
+/**
+ * Whether a URL points at the other site.
+ *
+ * MiniMax's edge answers a request from the wrong side of the border with a
+ * 307 to the other site (`.io` -> `.minimaxi.com` and the reverse). The two
+ * are different origins, so a redirect also drops the Authorization header;
+ * that is why the CLI reports `401 token is required` instead of an
+ * actionable error, and why a stale token is not the real cause.
+ */
+export function minimaxHostBelongsToOtherRegion(region: MinimaxRegion, target: string | URL): boolean {
+  let hostname: string
+  try {
+    hostname = typeof target === 'string' ? new URL(target).hostname : target.hostname
+  } catch {
+    return false
+  }
+  return region === 'global'
+    ? hostMatches(hostname, MINIMAX_CN_DOMAIN)
+    : hostMatches(hostname, MINIMAX_INTL_DOMAIN)
+}
+
+/** The sentence the card and the chat surface show for a refused region. */
+export function minimaxRegionBlockMessage(region: MinimaxRegion): string {
+  return region === 'global'
+    ? '本机 IP 不在 MiniMax 国际站的服务区域，国际站已拒绝连接（请求被重定向到国内站）。请切换到国内站，或更换网络后重试。'
+    : '本机 IP 不在 MiniMax 国内站的服务区域，国内站已拒绝连接（请求被重定向到国际站）。请切换到国际站，或更换网络后重试。'
+}
+
+/** A region whose hosts refused this machine's network. */
+export class MinimaxRegionBlockedError extends Error {
+  constructor(readonly region: MinimaxRegion) {
+    super(minimaxRegionBlockMessage(region))
+    this.name = 'MinimaxRegionBlockedError'
+  }
+}
+
+const regionAccessCache = new Map<MinimaxRegion, { at: number, blocked: boolean }>()
+
+/** Forget a cached reachability verdict. */
+export function invalidateMinimaxRegionAccess(region?: MinimaxRegion): void {
+  if (region === undefined) regionAccessCache.clear()
+  else regionAccessCache.delete(region)
+}
+
+function rememberRegionAccess(region: MinimaxRegion, blocked: boolean): void {
+  regionAccessCache.set(region, { at: Date.now(), blocked })
+}
+
+/** The last verdict, for synchronous rendering under the card. */
+export function minimaxRegionBlockedCached(region: MinimaxRegion): boolean {
+  const cached = regionAccessCache.get(region)
+  return cached?.blocked === true && Date.now() - cached.at < MINIMAX_REGION_ACCESS_TTL_MS
+}
+
+/**
+ * Probe the region's account host for a cross-region redirect.
+ *
+ * Only a redirect to the other site's domain counts as a block. A timeout or
+ * DNS failure leaves the previous verdict alone, so callers report the real
+ * network error instead of blaming the IP.
+ */
+export async function minimaxRegionBlocked(
+  region: MinimaxRegion,
+  options: { fresh?: boolean; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
+): Promise<boolean> {
+  const cached = regionAccessCache.get(region)
+  if (options.fresh !== true && cached !== undefined && Date.now() - cached.at < MINIMAX_REGION_ACCESS_TTL_MS) {
+    return cached.blocked
+  }
+  const fetchImpl = options.fetchImpl ?? fetch
+  const timeout = AbortSignal.timeout(MINIMAX_REGION_PROBE_TIMEOUT_MS)
+  const signal = options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])
+  try {
+    const response = await fetchImpl(`${MINIMAX_ACCOUNT_HOSTS[region]}/`, {
+      redirect: 'manual',
+      signal,
+      headers: { Accept: 'text/html,application/json' },
+    })
+    const location = response.headers.get('location')
+    const blocked = response.status >= 300 && response.status < 400
+      && location !== null
+      && minimaxHostBelongsToOtherRegion(region, location)
+    rememberRegionAccess(region, blocked)
+    return blocked
+  } catch {
+    return cached?.blocked === true
+  }
+}
+
+/** Whether one response is the edge redirecting this machine to the other site. */
+function redirectTargetsOtherRegion(
+  region: MinimaxRegion,
+  requestUrl: URL,
+  response: Response,
+): boolean {
+  if (response.status < 300 || response.status >= 400) return false
+  const location = response.headers.get('location')
+  if (location === null) return false
+  try {
+    return minimaxHostBelongsToOtherRegion(region, new URL(location, requestUrl))
+  } catch {
+    return false
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -373,6 +492,7 @@ async function minimaxAccountCall(
   const seconds = Math.floor(now / 1000)
   const response = await call.fetchImpl(url, {
     method: call.method ?? 'GET',
+    redirect: 'manual',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -385,7 +505,17 @@ async function minimaxAccountCall(
     ...body === '' ? {} : { body },
     ...call.signal === undefined ? {} : { signal: call.signal },
   })
+  if (redirectTargetsOtherRegion(region, url, response)) {
+    rememberRegionAccess(region, true)
+    throw new MinimaxRegionBlockedError(region)
+  }
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`MiniMax 账号接口返回了意外的重定向（HTTP ${response.status}）。`)
+  }
   if (!response.ok) {
+    if ((response.status === 401 || response.status === 403) && minimaxRegionBlockedCached(region)) {
+      throw new MinimaxRegionBlockedError(region)
+    }
     throw new Error(response.status === 401 || response.status === 403
       ? 'MiniMax 登录已过期：先发一条消息让 CLI 自动续期，或重新登录后再刷新额度。'
       : `MiniMax 账号接口返回 HTTP ${response.status}。`)
@@ -558,7 +688,9 @@ async function readMinimaxRemains(
   fetchImpl: typeof fetch,
   signal: AbortSignal,
 ): Promise<Record<string, unknown> | undefined> {
-  const response = await fetchImpl(`${MINIMAX_QUOTA_HOSTS[region]}/v1/api/openplatform/coding_plan/remains`, {
+  const url = new URL('/v1/api/openplatform/coding_plan/remains', MINIMAX_QUOTA_HOSTS[region])
+  const response = await fetchImpl(url, {
+    redirect: 'manual',
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${token}`,
@@ -566,7 +698,15 @@ async function readMinimaxRemains(
     },
     signal,
   })
+  if (redirectTargetsOtherRegion(region, url, response)) {
+    rememberRegionAccess(region, true)
+    throw new MinimaxRegionBlockedError(region)
+  }
+  if (response.status >= 300 && response.status < 400) return undefined
   if (!response.ok) {
+    if ((response.status === 401 || response.status === 403) && minimaxRegionBlockedCached(region)) {
+      throw new MinimaxRegionBlockedError(region)
+    }
     if (response.status === 401 || response.status === 403) {
       throw new Error('MiniMax 登录已过期：先发一条消息让 CLI 自动续期，或重新登录后再刷新额度。')
     }
@@ -608,6 +748,20 @@ export async function minimaxUsage(
   const signedIn = token !== undefined || minimaxSignedIn(region)
   if (!signedIn) {
     return { at: Date.now(), region, signedIn: false, installed }
+  }
+  if (await minimaxRegionBlocked(region, {
+    fresh: options.fresh,
+    fetchImpl: options.fetchImpl,
+    signal: options.signal,
+  })) {
+    return {
+      at: Date.now(),
+      region,
+      signedIn: true,
+      installed,
+      regionBlocked: true,
+      error: minimaxRegionBlockMessage(region),
+    }
   }
   if (token === undefined) {
     return {
@@ -685,12 +839,16 @@ async function readUsage(
       : undefined
     return minimaxUsageFromParts({ region, installed, userInfo, workspaces, membership, remains })
   } catch (error) {
+    const blocked = error instanceof MinimaxRegionBlockedError
     return {
       at: Date.now(),
       region,
       signedIn: true,
       installed,
-      error: error instanceof Error ? error.message : String(error),
+      ...blocked ? { regionBlocked: true } : {},
+      error: blocked
+        ? minimaxRegionBlockMessage(region)
+        : error instanceof Error ? error.message : String(error),
     }
   }
 }
@@ -1293,6 +1451,10 @@ export class MinimaxCatalog {
   /** Models for one region; a failed refresh keeps the last good list. */
   async models(requested?: MinimaxRegion): Promise<readonly MinimaxModel[]> {
     const region = requested ?? readLive(this.region, 'cn')
+    if (await minimaxRegionBlocked(region)) {
+      this.invalidate(region)
+      return []
+    }
     const ttl = readLive(this.ttlMs, MINIMAX_CACHE_TTL_MS)
     const cached = this.snapshots.get(region)
     if (cached !== undefined && Date.now() - cached.at < ttl) return cached.models
@@ -1330,6 +1492,9 @@ export class MinimaxCatalog {
   private async fetch(region: MinimaxRegion): Promise<readonly MinimaxModel[]> {
     if (!minimaxSignedIn(region)) {
       throw new Error(`${region === 'cn' ? 'MiniMax 国内站' : 'MiniMax 国际站'}尚未登录，请先在设置页登录。`)
+    }
+    if (await minimaxRegionBlocked(region)) {
+      throw new MinimaxRegionBlockedError(region)
     }
     const timeout = readLive(this.timeoutMs, MINIMAX_FETCH_TIMEOUT_MS)
     return await withAcp(region, timeout, async acp => acp.probeModels(), {
@@ -1961,6 +2126,20 @@ export class MinimaxSession {
       this.events.push({ kind: 'prompt-done', stopReason: response.stopReason })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (/401 token is required/i.test(message)) {
+        // With a China IP the international edge redirects to the mainland
+        // host, which drops the Authorization header; the CLI then reports a
+        // missing token. Refresh the verdict in the background and explain the
+        // real cause instead of asking for another login.
+        void minimaxRegionBlocked(this.region, { fresh: true })
+        const hint = minimaxRegionBlockedCached(this.region)
+          ? minimaxRegionBlockMessage(this.region)
+          : this.region === 'global'
+            ? 'MiniMax 国际站拒绝了本机连接（401 token is required）。通常是本机网络 IP 不在国际站服务区域；请检查网络后重试，或切换到国内站。'
+            : 'MiniMax 国内站拒绝了本机连接（401 token is required）。请检查网络或重新登录后重试。'
+        this.events.push({ kind: 'prompt-error', error: new Error(hint) })
+        return
+      }
       const retryable = /active Turn|already has an active/i.test(message)
       if (retryable && attempt < 4 && !this.disposed && this.acp === acp) {
         await new Promise(resolve => setTimeout(resolve, 200 * 2 ** attempt))

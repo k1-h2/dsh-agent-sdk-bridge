@@ -195,6 +195,10 @@ window.__ModuleLoader__.load({
       minimaxQuotaReset: '重置于',
       minimaxQuotaUnlimited: '不限',
       minimaxQuotaNone: '当前账号没有 Token Plan 额度窗口。',
+      minimaxRegionBlockedShort: '区域不可用',
+      minimaxIpBlocked: '本机 IP 不在 MiniMax 国际站的服务区域，国际站已拒绝连接。请切换到国内站，或更换网络后重试。',
+      minimaxSwitchToCn: '切换到国内站',
+      minimaxSwitchToGlobal: '切换到国际站',
       minimaxUsageLoading: '正在读取账号与额度…',
       minimaxUsageFailed: '额度读取失败',
       advancedFields: {
@@ -372,6 +376,10 @@ window.__ModuleLoader__.load({
       minimaxQuotaReset: 'resets at',
       minimaxQuotaUnlimited: 'Unlimited',
       minimaxQuotaNone: 'This account has no Token Plan quota windows.',
+      minimaxRegionBlockedShort: 'Region unavailable',
+      minimaxIpBlocked: 'This machine\'s IP is outside the MiniMax International service region, so the international site refused the connection. Switch to the mainland site or change networks.',
+      minimaxSwitchToCn: 'Switch to mainland',
+      minimaxSwitchToGlobal: 'Switch to international',
       minimaxUsageLoading: 'Reading the account and quota…',
       minimaxUsageFailed: 'Could not read the quota',
       advancedFields: {
@@ -1139,7 +1147,7 @@ window.__ModuleLoader__.load({
      * auth file. The card polls the host while that process runs, then re-reads
      * the account so the model page can unlock.
      */
-    function MinimaxCard({ ctx, t, brand, refreshSignal, onAuthChange, onRegionChange }) {
+    function MinimaxCard({ ctx, t, brand, refreshSignal, onAuthChange, onRegionChange, onUsage }) {
       const form = ctx.configForms.get(NS)
       const subscribe = useCallback(listener => form.subscribe(listener), [form])
       const read = useCallback(() => form.getSnapshot(), [form])
@@ -1173,6 +1181,7 @@ window.__ModuleLoader__.load({
           if (regionRef.current !== target) return
           setUsage(payload)
           rememberMinimax(target, { usage: payload })
+          onUsage?.(payload)
           if (typeof payload?.signedIn === 'boolean') {
             setAuth(previous => (previous?.running === true
               ? previous
@@ -1182,7 +1191,7 @@ window.__ModuleLoader__.load({
           if (regionRef.current !== target) return
           setUsage({ error: String(err?.message ?? err) })
         }
-      }, [])
+      }, [onUsage])
 
       const pollAuth = useCallback(async (target = regionRef.current) => {
         try {
@@ -1357,74 +1366,93 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const blocked = usage?.regionBlocked === true
+      const hasQuotaData = account !== undefined || plan !== undefined
+        || credits !== undefined || quotas.length > 0
+
       const quotaBlock = !signedIn
         ? h('div', { style: css.note }, installed ? t('minimaxNoUsage') : t('minimaxCliRequired'))
-        : usage === undefined
-          ? h('div', { style: css.note }, t('minimaxUsageLoading'))
-          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
-            h('div', { style: css.usageLine },
-              h('span', { style: css.usageLabel }, t('minimaxAccount')),
-              h('span', { style: css.usageValue }, account?.name ?? account?.email ?? t('minimaxAccountUnknown')),
-            ),
-            h('div', { style: css.usageLine },
-              h('span', { style: css.usageLabel }, t('minimaxPlan')),
-              h('span', { style: css.usageValue }, plan?.name ?? planLabel),
-              plan?.hasTokenPlan === true ? h('span', { style: { ...css.tag, marginLeft: '6px' } }, t('minimaxPlanTokenPlan')) : null,
-              plan?.expiresAt === undefined
-                ? null
-                : h('span', { style: css.note }, `${t('minimaxExpires')} ${dateLabel(plan.expiresAt)}`),
-            ),
-            credits === undefined
-              ? null
-              : h('div', { style: css.usageLine },
-                  h('span', { style: css.usageLabel }, t('minimaxCredits')),
-                  h('span', { style: css.usageValue }, creditsOf(credits.remaining)),
-                  typeof credits.purchasedRemaining === 'number' && credits.purchasedRemaining > 0
-                    ? h('span', { style: css.note }, `${t('minimaxCreditsPurchased')} ${creditsOf(credits.purchasedRemaining)}`)
-                    : null,
-                  typeof credits.freeRemaining === 'number' && credits.freeRemaining > 0
-                    ? h('span', { style: css.note }, `${t('minimaxCreditsFree')} ${creditsOf(credits.freeRemaining)}`)
-                    : null,
-                ),
-            quotas.length === 0
-              ? h('div', { style: css.note }, t('minimaxQuotaNone'))
-              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
-                  quotas.map(window => {
-                    const remaining = typeof window.remainingPercent === 'number' ? window.remainingPercent : undefined
-                    const used = remaining === undefined ? undefined : 100 - remaining
-                    return h('div', { key: window.id, style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-                      h('div', { style: css.usageLine },
-                        h('span', { style: css.usageLabel }, window.label),
-                        h('span', { style: css.usageValue }, window.unlimited
-                          ? t('minimaxQuotaUnlimited')
-                          : remaining === undefined
-                            ? (window.remainingCount === undefined ? '—' : `${creditsOf(window.remainingCount)} / ${creditsOf(window.totalCount ?? 0)}`)
-                            : `${t('minimaxQuotaRemaining')} ${remaining}%`),
-                        typeof window.resetAt === 'number'
-                          ? h('span', { style: css.note }, `${t('minimaxQuotaReset')} ${timeLabel(window.resetAt)}`)
+        : blocked
+          ? h('div', { style: css.guide },
+              h('div', { style: css.guideText }, usage?.error ?? t('minimaxIpBlocked')),
+              h('button', {
+                style: { ...css.btn, ...css.btnAlert },
+                disabled: busy,
+                onClick: () => setRegion(region === 'global' ? 'cn' : 'global'),
+              }, region === 'global' ? t('minimaxSwitchToCn') : t('minimaxSwitchToGlobal')),
+            )
+          : usage === undefined
+            ? h('div', { style: css.note }, t('minimaxUsageLoading'))
+            : !hasQuotaData && usage?.error !== undefined
+              ? h('div', { style: css.err }, `${t('minimaxUsageFailed')}：${usage.error}`)
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+                  account === undefined
+                    ? null
+                    : h('div', { style: css.usageLine },
+                        h('span', { style: css.usageLabel }, t('minimaxAccount')),
+                        h('span', { style: css.usageValue }, account?.name ?? account?.email ?? t('minimaxAccountUnknown')),
+                      ),
+                  plan === undefined
+                    ? null
+                    : h('div', { style: css.usageLine },
+                        h('span', { style: css.usageLabel }, t('minimaxPlan')),
+                        h('span', { style: css.usageValue }, plan.name ?? planLabel),
+                        plan.hasTokenPlan === true ? h('span', { style: { ...css.tag, marginLeft: '6px' } }, t('minimaxPlanTokenPlan')) : null,
+                        plan.expiresAt === undefined
+                          ? null
+                          : h('span', { style: css.note }, `${t('minimaxExpires')} ${dateLabel(plan.expiresAt)}`),
+                      ),
+                  credits === undefined
+                    ? null
+                    : h('div', { style: css.usageLine },
+                        h('span', { style: css.usageLabel }, t('minimaxCredits')),
+                        h('span', { style: css.usageValue }, creditsOf(credits.remaining)),
+                        typeof credits.purchasedRemaining === 'number' && credits.purchasedRemaining > 0
+                          ? h('span', { style: css.note }, `${t('minimaxCreditsPurchased')} ${creditsOf(credits.purchasedRemaining)}`)
+                          : null,
+                        typeof credits.freeRemaining === 'number' && credits.freeRemaining > 0
+                          ? h('span', { style: css.note }, `${t('minimaxCreditsFree')} ${creditsOf(credits.freeRemaining)}`)
                           : null,
                       ),
-                      used === undefined || window.unlimited
-                        ? null
-                        : h('div', { style: css.progressOuter },
-                            h('div', {
-                              style: {
-                                ...css.progressInner,
-                                width: `${used}%`,
-                                ...(remaining !== undefined && remaining < 20 ? css.progressDanger : {}),
-                              },
-                            }),
-                          ),
-                    )
-                  }),
-                ),
-            usage?.error !== undefined ? h('div', { style: css.err }, `${t('minimaxUsageFailed')}：${usage.error}`) : null,
-          )
-
+                  quotas.length === 0
+                    ? h('div', { style: css.note }, t('minimaxQuotaNone'))
+                    : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                        quotas.map(window => {
+                          const remaining = typeof window.remainingPercent === 'number' ? window.remainingPercent : undefined
+                          const used = remaining === undefined ? undefined : 100 - remaining
+                          return h('div', { key: window.id, style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                            h('div', { style: css.usageLine },
+                              h('span', { style: css.usageLabel }, window.label),
+                              h('span', { style: css.usageValue }, window.unlimited
+                                ? t('minimaxQuotaUnlimited')
+                                : remaining === undefined
+                                  ? (window.remainingCount === undefined ? '—' : `${creditsOf(window.remainingCount)} / ${creditsOf(window.totalCount ?? 0)}`)
+                                  : `${t('minimaxQuotaRemaining')} ${remaining}%`),
+                              typeof window.resetAt === 'number'
+                                ? h('span', { style: css.note }, `${t('minimaxQuotaReset')} ${timeLabel(window.resetAt)}`)
+                                : null,
+                            ),
+                            used === undefined || window.unlimited
+                              ? null
+                              : h('div', { style: css.progressOuter },
+                                  h('div', {
+                                    style: {
+                                      ...css.progressInner,
+                                      width: `${used}%`,
+                                      ...(remaining !== undefined && remaining < 20 ? css.progressDanger : {}),
+                                    },
+                                  }),
+                                ),
+                          )
+                        }),
+                      ),
+                  usage?.error !== undefined ? h('div', { style: css.err }, `${t('minimaxUsageFailed')}：${usage.error}`) : null,
+                )
       return h('div', { style: css.usageCard },
         h('div', { style: css.usageHead },
           h('h3', { style: css.h3 }, t('minimaxAuthTitle')),
-          h('span', { style: { ...css.note, opacity: 0.7 } }, signedIn ? t('minimaxSignedIn') : t('minimaxNotLoggedIn')),
+          h('span', { style: { ...css.note, opacity: 0.7 } },
+            blocked ? t('minimaxRegionBlockedShort') : signedIn ? t('minimaxSignedIn') : t('minimaxNotLoggedIn')),
           signedIn
             ? h('button', { style: { ...css.btn, marginLeft: 'auto' }, disabled: busy, onClick: () => void loadUsage(true) }, t('usageRefresh'))
             : null,
@@ -1448,7 +1476,7 @@ window.__ModuleLoader__.load({
           }, signingIn ? t('minimaxLoggingIn') : signedIn ? t('minimaxLogout') : t('minimaxLogin')),
         ),
         quotaBlock,
-        typeof auth?.expiresAt === 'number'
+        typeof auth?.expiresAt === 'number' && !blocked
           ? h('div', { style: css.usageFoot },
               h('span', null, `${t('minimaxExpires')} ${dateLabel(auth.expiresAt)}`),
             )
@@ -1628,6 +1656,16 @@ window.__ModuleLoader__.load({
       const lastLoaded = useRef(undefined)
       const refresh = useCallback(() => { void loadRef.current() }, [])
 
+      /** A blocked region has no readable catalog; drop the remembered table. */
+      const handleMinimaxUsage = useCallback(payload => {
+        if (brand.id !== 'minimax' || payload?.regionBlocked !== true) return
+        const notice = typeof payload.error === 'string' ? payload.error : t('minimaxIpBlocked')
+        setModels([])
+        setCatalogNotice(notice)
+        setError(undefined)
+        writeCache(brand.id, kindRef.current, { rows: [], notice, signedIn: true, at: Date.now() })
+      }, [brand.id, t])
+
       /**
        * On a region switch, paint that region's remembered table first and
        * then verify it with the host. The read carries the region explicitly,
@@ -1639,8 +1677,17 @@ window.__ModuleLoader__.load({
           const accountSnapshot = brand.id === 'minimax'
             ? minimaxSnapshot(region)
             : codeBuddySnapshot(region)
-          setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
-          setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
+          const blocked = brand.id === 'minimax' && accountSnapshot?.usage?.regionBlocked === true
+          if (blocked) {
+            // Never paint a remembered table for a region this machine cannot reach.
+            setModels([])
+            setCatalogNotice(typeof accountSnapshot?.usage?.error === 'string'
+              ? accountSnapshot.usage.error
+              : t('minimaxIpBlocked'))
+          } else {
+            setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
+            setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
+          }
           // The account snapshot already knows whether this region is signed
           // in, so the locked view does not flash while the catalog boots.
           setSignedIn(saved?.signedIn === true || accountSnapshot?.auth?.signedIn === true)
@@ -1653,7 +1700,7 @@ window.__ModuleLoader__.load({
           && lastLoaded.current !== region
         lastLoaded.current = region
         void load(switched)
-      }, [brand.id, regional, modelsKind, region, load])
+      }, [brand.id, regional, modelsKind, region, load, t])
 
       /** Login/logout flips which catalog the page is allowed to show. */
       const handleAuthChange = useCallback(next => {
@@ -1904,6 +1951,7 @@ window.__ModuleLoader__.load({
               t, ctx, brand, refreshSignal: usageTick,
               onAuthChange: handleAuthChange,
               onRegionChange: selectRegion,
+              onUsage: handleMinimaxUsage,
             })
           : null
 

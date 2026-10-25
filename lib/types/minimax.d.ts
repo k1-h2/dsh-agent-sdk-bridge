@@ -111,6 +111,8 @@ export interface MinimaxUsageSnapshot {
     signedIn: boolean;
     /** Whether the `mcode` executable was found. */
     installed: boolean;
+    /** The site refused this machine's network and redirected to the other one. */
+    regionBlocked?: boolean;
     error?: string;
     account?: MinimaxAccountInfo;
     plan?: MinimaxPlanInfo;
@@ -134,6 +136,39 @@ export declare function minimaxModelsFromConfigOptions(options: readonly any[] |
 export declare function minimaxSignedIn(region: MinimaxRegion): boolean;
 /** How long one quota reading stays fresh. */
 export declare const MINIMAX_USAGE_CACHE_TTL_MS = 60000;
+/**
+ * Whether a URL points at the other site.
+ *
+ * MiniMax's edge answers a request from the wrong side of the border with a
+ * 307 to the other site (`.io` -> `.minimaxi.com` and the reverse). The two
+ * are different origins, so a redirect also drops the Authorization header;
+ * that is why the CLI reports `401 token is required` instead of an
+ * actionable error, and why a stale token is not the real cause.
+ */
+export declare function minimaxHostBelongsToOtherRegion(region: MinimaxRegion, target: string | URL): boolean;
+/** The sentence the card and the chat surface show for a refused region. */
+export declare function minimaxRegionBlockMessage(region: MinimaxRegion): string;
+/** A region whose hosts refused this machine's network. */
+export declare class MinimaxRegionBlockedError extends Error {
+    readonly region: MinimaxRegion;
+    constructor(region: MinimaxRegion);
+}
+/** Forget a cached reachability verdict. */
+export declare function invalidateMinimaxRegionAccess(region?: MinimaxRegion): void;
+/** The last verdict, for synchronous rendering under the card. */
+export declare function minimaxRegionBlockedCached(region: MinimaxRegion): boolean;
+/**
+ * Probe the region's account host for a cross-region redirect.
+ *
+ * Only a redirect to the other site's domain counts as a block. A timeout or
+ * DNS failure leaves the previous verdict alone, so callers report the real
+ * network error instead of blaming the IP.
+ */
+export declare function minimaxRegionBlocked(region: MinimaxRegion, options?: {
+    fresh?: boolean;
+    fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+}): Promise<boolean>;
 /**
  * Build a snapshot from the three account documents.
  *

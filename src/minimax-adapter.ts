@@ -18,8 +18,9 @@ import type { MinimaxRegion } from './brand.ts'
 import {
   MinimaxAuth, MinimaxCatalog, MinimaxMcpServer, MinimaxSessionManager,
   MINIMAX_CACHE_TTL_MS, MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS,
-  MINIMAX_FETCH_TIMEOUT_MS, invalidateMinimaxUsage, minimaxColdStream, minimaxSignedIn,
-  minimaxUsage,
+  MINIMAX_FETCH_TIMEOUT_MS, invalidateMinimaxRegionAccess, invalidateMinimaxUsage,
+  minimaxColdStream, minimaxRegionBlockMessage, minimaxRegionBlocked,
+  minimaxRegionBlockedCached, minimaxSignedIn, minimaxUsage,
 } from './minimax.ts'
 import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts'
 import { resolveMinimaxCli } from './minimax-cli.ts'
@@ -126,7 +127,13 @@ export class MinimaxAdapter extends LlmAdapter {
   /** The live catalog, unfiltered (the page must show switched-off models). */
   async describeCatalog(region: MinimaxRegion = this.region): Promise<readonly MinimaxModel[]> {
     if (!this.isSignedIn(region)) return []
+    if (await minimaxRegionBlocked(region)) return []
     return this.catalog.models(region)
+  }
+
+  /** Whether the region's endpoints are refusing this machine's network. */
+  regionBlocked(region: MinimaxRegion = this.region): boolean {
+    return minimaxRegionBlockedCached(region)
   }
 
   /** Whether the selected (or given) region has a stored login. */
@@ -139,6 +146,7 @@ export class MinimaxAdapter extends LlmAdapter {
     if (resolveMinimaxCli() === undefined) {
       return '未安装 MiniMax Code CLI（mcode）。请先安装后再登录。'
     }
+    if (minimaxRegionBlockedCached(region)) return minimaxRegionBlockMessage(region)
     if (!this.isSignedIn(region)) return '请先登录 MiniMax Code，登录后才会读取并显示模型目录。'
     return this.catalog.error(region)
   }
@@ -188,6 +196,7 @@ export class MinimaxAdapter extends LlmAdapter {
       this.sessions.closeAll()
       this.invalidateCatalog(region)
       this.invalidateUsage(region)
+      invalidateMinimaxRegionAccess(region)
     })
   }
 
@@ -196,6 +205,7 @@ export class MinimaxAdapter extends LlmAdapter {
     this.sessions.closeAll()
     this.invalidateCatalog(region)
     this.invalidateUsage(region)
+    invalidateMinimaxRegionAccess(region)
     return result
   }
 
@@ -210,6 +220,7 @@ export class MinimaxAdapter extends LlmAdapter {
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const region = this.region
     if (!this.isSignedIn(region)) return []
+    if (await minimaxRegionBlocked(region)) return []
     const models = await this.catalog.models(region)
     const disabled = this.disabledFor(region)
     return models.filter(model => !disabled.has(model.id)).map(model => modelInfo(provider, model))
@@ -263,6 +274,9 @@ export class MinimaxAdapter extends LlmAdapter {
     if (!this.isSignedIn(region)) {
       const label = region === 'cn' ? 'MiniMax 国内站' : 'MiniMax 国际站'
       throw new Error(`${label}尚未登录，请先在设置 → MiniMax Code 中登录。`)
+    }
+    if (await minimaxRegionBlocked(region)) {
+      throw new Error(minimaxRegionBlockMessage(region))
     }
     const model = resolveMinimaxModelId(options.model, this.aliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {

@@ -85,6 +85,8 @@ export {
   minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand,
   isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions,
   minimaxUsage, minimaxUsageFromParts, invalidateMinimaxUsage,
+  minimaxRegionBlocked, minimaxRegionBlockedCached, minimaxRegionBlockMessage,
+  minimaxHostBelongsToOtherRegion, invalidateMinimaxRegionAccess, MinimaxRegionBlockedError,
   MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, MINIMAX_USAGE_CACHE_TTL_MS,
 } from './minimax.ts'
 export type {

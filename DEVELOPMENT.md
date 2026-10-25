@@ -86,6 +86,15 @@
   非订阅账号会收到 `base_resp.status_code = 2062`，此时不生成窗口，只显示积分。
   结果缓存 60 秒（`MINIMAX_USAGE_CACHE_TTL_MS`），登录、登出、CLI 变更都会清缓存。
   映射逻辑抽成 `minimaxUsageFromParts()`，可脱离网络单测。
+- **MiniMax 的区域可达性**：两个站点的边缘节点对跨区请求返回 `307`，把 `.io` 指回
+  `.minimaxi.com`（反向亦然）。跨 origin 重定向会丢掉 `Authorization`，账号接口于是返回空
+  `401`，CLI 的原始错误也只是 `401 token is required`——这不是登录过期。`minimaxRegionBlocked()`
+  先请求账号主机的 `/`（`redirect: 'manual'`），只把「重定向到另一站域名」判为区域不可用，
+  超时或 DNS 失败不改变既有结论。判为不可用后，`minimaxUsage()` 直接返回一份只有
+  `regionBlocked` 与提示的快照（不含账号/套餐/额度），`MinimaxCatalog` 与 `listModels()` 返回空，
+  `dispatch()` 直接抛出同一条提示。结论缓存 30 秒，登录/登出/切换区域/`fresh=1` 会重新探测。
+  `/models` 也会回传 `regionBlocked`，页面据此清掉该区域缓存的模型表，避免把别的网络的旧数据
+  当成当前可用的目录。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
 - **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` / `minimaxEnabled` 是结构字段。

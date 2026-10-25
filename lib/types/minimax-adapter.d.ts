@@ -51,6 +51,8 @@ export declare class MinimaxAdapter extends LlmAdapter {
     providerInfo(provider: string): LlmProviderInfo;
     /** The live catalog, unfiltered (the page must show switched-off models). */
     describeCatalog(region?: MinimaxRegion): Promise<readonly MinimaxModel[]>;
+    /** Whether the region's endpoints are refusing this machine's network. */
+    regionBlocked(region?: MinimaxRegion): boolean;
     /** Whether the selected (or given) region has a stored login. */
     isSignedIn(region?: MinimaxRegion): boolean;
     /** Why the last catalog read failed, for the page's guidance. */
