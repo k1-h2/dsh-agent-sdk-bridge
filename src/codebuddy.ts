@@ -851,6 +851,16 @@ export class CodeBuddySession {
   private readonly callNonce = randomUUID().slice(0, 8)
   private lastUsage: TurnUsage | undefined
   private resultUsage: TurnUsage | undefined
+  /**
+   * Ids of assistant messages whose streaming events this session consumed.
+   *
+   * Kept across turns, not reset with the turn: the echo of a tool round is
+   * delivered on the next stream(), so the previous turn's id is exactly the
+   * one that has to be recognised. Only the last few ids matter, and bounding
+   * the list keeps a long-lived session from growing without limit.
+   */
+  private readonly streamedMessageIds = new Set<string>()
+  private readonly streamedMessageOrder: string[] = []
   private readonly output = new TurnOutputAccounting()
   private inputChars = 0
   private readonly toolResultTimeoutMs: number
@@ -1057,6 +1067,12 @@ export class CodeBuddySession {
       if (event.type === 'message_start') {
         const usage = (event.message as { usage?: TurnUsage }).usage
         if (usage !== undefined) this.lastUsage = usage
+        // Remember which message this stream belongs to. A tool round ends the
+        // host turn at `message_stop` (waiting for `result` would deadlock:
+        // the CLI only finishes after the host returns the tool result), so
+        // the CLI's `assistant` echo of this message is still buffered and is
+        // delivered on the NEXT stream() — where it must not be re-emitted.
+        this.rememberStreamedMessage((event.message as { id?: unknown }).id)
         return
       }
       if (event.type === 'content_block_start') {
@@ -1132,6 +1148,12 @@ export class CodeBuddySession {
       return
     }
     if (message.type === 'assistant') {
+      // The CLI sends the assembled message after its streaming events. When
+      // those events already reached the host, this is an echo, not new
+      // content; a replayed echo would print the same reply a second time
+      // (and count its tokens twice).
+      const echoOf = (message.message as { id?: unknown }).id
+      if (typeof echoOf === 'string' && this.streamedMessageIds.has(echoOf)) return
       if (this.textBlock === undefined && this.tools.length === 0) {
         for (const block of message.message.content) {
           if (block.type === 'tool_use') {
@@ -1169,6 +1191,17 @@ export class CodeBuddySession {
         return
       }
       this.endTurn({ kind: 'stop' })
+    }
+  }
+
+  /** Record that one assistant message reached the host as streaming events. */
+  private rememberStreamedMessage(id: unknown): void {
+    if (typeof id !== 'string' || id.length === 0 || this.streamedMessageIds.has(id)) return
+    this.streamedMessageIds.add(id)
+    this.streamedMessageOrder.push(id)
+    if (this.streamedMessageOrder.length > 32) {
+      const oldest = this.streamedMessageOrder.shift()
+      if (oldest !== undefined) this.streamedMessageIds.delete(oldest)
     }
   }
 

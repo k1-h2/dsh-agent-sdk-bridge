@@ -209,6 +209,16 @@ export declare class CodeBuddySession {
     private readonly callNonce;
     private lastUsage;
     private resultUsage;
+    /**
+     * Ids of assistant messages whose streaming events this session consumed.
+     *
+     * Kept across turns, not reset with the turn: the echo of a tool round is
+     * delivered on the next stream(), so the previous turn's id is exactly the
+     * one that has to be recognised. Only the last few ids matter, and bounding
+     * the list keeps a long-lived session from growing without limit.
+     */
+    private readonly streamedMessageIds;
+    private readonly streamedMessageOrder;
     private readonly output;
     private inputChars;
     private readonly toolResultTimeoutMs;
@@ -263,6 +273,8 @@ export declare class CodeBuddySession {
     private canUseTool;
     private consume;
     private handle;
+    /** Record that one assistant message reached the host as streaming events. */
+    private rememberStreamedMessage;
     private resetTurnState;
     private emit;
     private countOutput;
