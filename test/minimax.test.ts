@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   MinimaxMcpBridge, MinimaxMcpServer, hostMcpToolName, isHostMcpTool,
   minimaxAuthStatePath, minimaxDataDir, minimaxModelsFromConfigOptions, minimaxSignedIn,
+  minimaxUsageFromParts,
 } from '../src/minimax.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../src/minimax-cli.ts'
 import { resolveMinimaxModelId } from '../src/minimax-adapter.ts'
@@ -143,6 +144,131 @@ describe('MiniMax per-region state', () => {
     expect(minimaxSignedIn('global')).toBe(false)
     write('en', { status: 'expired', region: 'en' })
     expect(minimaxSignedIn('global')).toBe(false)
+  })
+})
+
+describe('MiniMax account and quota snapshot', () => {
+  const USER_INFO = {
+    name: 'MiniMax061286',
+    avatar: 'https://example.test/a.png',
+    userID: 'jp3P3Aj9nR58',
+    realUserID: '509665762244173832',
+  }
+  const WORKSPACES = [{
+    workspace_id: 0,
+    workspace_type: 0,
+    has_token_plan: true,
+    op_group_id: '2053128250695098517',
+    opcredit_balance: 0,
+  }]
+  const TOKEN_PLAN_MEMBERSHIP = {
+    has_token_plan: true,
+    token_plan_tier: 'pro',
+    token_plan_expires_at: 1_800_000_000_000,
+    op_group_id: '2053128250695098517',
+    op_credit_summary: { total_remaining_amount: '12.5', purchased_remaining_amount: '0', free_remaining_amount: '12.5' },
+  }
+  const REMAINS = {
+    base_resp: { status_code: 0, status_msg: 'success' },
+    model_remains: [
+      {
+        model_name: 'general',
+        current_interval_status: 1,
+        current_interval_remaining_percent: 76,
+        current_interval_usage_count: 240,
+        current_interval_total_count: 1000,
+        current_weekly_remaining_percent: 42,
+        current_weekly_status: 1,
+        end_time: 1_800_000_100_000,
+        weekly_end_time: 1_800_500_000_000,
+      },
+      {
+        model_name: 'video',
+        current_interval_status: 3,
+        current_interval_usage_count: 12,
+        current_interval_total_count: 100,
+        end_time: 1_800_000_200_000,
+      },
+    ],
+  }
+
+  it('maps a Token Plan account to its windows and credit balance', () => {
+    const snapshot = minimaxUsageFromParts({
+      region: 'cn',
+      at: 1,
+      userInfo: USER_INFO,
+      workspaces: WORKSPACES,
+      membership: TOKEN_PLAN_MEMBERSHIP,
+      remains: REMAINS,
+    })
+    expect(snapshot).toMatchObject({
+      at: 1,
+      region: 'cn',
+      signedIn: true,
+      installed: true,
+      account: { name: 'MiniMax061286', userId: 'jp3P3Aj9nR58', avatar: 'https://example.test/a.png' },
+      plan: { kind: 'token-plan', hasTokenPlan: true, tier: 'pro', expiresAt: 1_800_000_000_000 },
+      credits: { remaining: 12.5, purchasedRemaining: 0, freeRemaining: 12.5 },
+    })
+    expect(snapshot.windows?.map(window => window.id)).toEqual(['general:5h', 'general:7d', 'video:5h'])
+    expect(snapshot.windows?.[0]).toMatchObject({
+      label: '通用 · 5 小时',
+      remainingPercent: 76,
+      resetAt: 1_800_000_100_000,
+      unlimited: false,
+      remainingCount: 240,
+      totalCount: 1000,
+    })
+    expect(snapshot.windows?.[2]).toMatchObject({ unlimited: true })
+    // An unlimited window has no percentage to draw.
+    expect(snapshot.windows?.[2].remainingPercent).toBeUndefined()
+  })
+
+  it('reports a credit account without inventing quota windows', () => {
+    const snapshot = minimaxUsageFromParts({
+      region: 'cn',
+      userInfo: USER_INFO,
+      workspaces: [{ ...WORKSPACES[0], has_token_plan: false }],
+      membership: {
+        has_token_plan: false,
+        subscription_type: 'none',
+        op_credit_summary: { total_remaining_amount: '2149.988' },
+      },
+      // A non-subscriber's remains endpoint answers 2062, not windows.
+      remains: { base_resp: { status_code: 2062, status_msg: 'no active token plan subscription' }, model_remains: null },
+    })
+    expect(snapshot.plan).toMatchObject({ kind: 'credits', hasTokenPlan: false, subscriptionType: 'none' })
+    expect(snapshot.credits).toMatchObject({ remaining: 2149.988 })
+    expect(snapshot.windows).toBeUndefined()
+  })
+
+  it('falls back to the workspace balance and free plan when membership is sparse', () => {
+    const snapshot = minimaxUsageFromParts({
+      region: 'global',
+      userInfo: { email: 'user@example.test' },
+      workspaces: [{ workspace_type: 0, opcredit_balance: 0, has_token_plan: false }],
+      membership: {},
+    })
+    expect(snapshot.plan).toMatchObject({ kind: 'free', hasTokenPlan: false })
+    expect(snapshot.credits).toMatchObject({ remaining: 0 })
+    expect(snapshot.account?.email).toBe('user@example.test')
+    expect(snapshot.windows).toBeUndefined()
+  })
+
+  it('omits windows a rejection response or an empty bucket list would produce', () => {
+    const empty = minimaxUsageFromParts({
+      region: 'cn',
+      membership: { has_token_plan: true },
+      remains: { base_resp: { status_code: 0 }, model_remains: [] },
+    })
+    expect(empty.windows).toBeUndefined()
+
+    const rejected = minimaxUsageFromParts({
+      region: 'cn',
+      membership: { has_token_plan: true },
+      remains: { base_resp: { status_code: 1004, status_msg: 'login fail' }, model_remains: [] },
+    })
+    expect(rejected.windows).toBeUndefined()
   })
 })
 

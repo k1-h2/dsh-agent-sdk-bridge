@@ -65,8 +65,8 @@ export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pi
 export type { ImageRequestReader, QoderAdapterOptions } from './adapter.ts';
 export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './codebuddy-adapter.ts';
 export { MinimaxAdapter, MINIMAX_PROVIDER, resolveMinimaxModelId } from './minimax-adapter.ts';
-export { MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager, minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand, isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions, MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, } from './minimax.ts';
-export type { MinimaxAuthStatus, MinimaxMcpToolResult, MinimaxModel, MinimaxUsageSnapshot, } from './minimax.ts';
+export { MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager, minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand, isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions, minimaxUsage, minimaxUsageFromParts, invalidateMinimaxUsage, MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, MINIMAX_USAGE_CACHE_TTL_MS, } from './minimax.ts';
+export type { MinimaxAccountInfo, MinimaxAuthStatus, MinimaxCreditInfo, MinimaxMcpToolResult, MinimaxModel, MinimaxPlanInfo, MinimaxQuotaWindow, MinimaxUsageSnapshot, } from './minimax.ts';
 export { MinimaxCliSetup, readMinimaxSetupStatus, resolveMinimaxCli, startMinimaxSetup, stopMinimaxSetup, } from './minimax-cli.ts';
 export type { MinimaxSetupMode, MinimaxSetupStatus, MinimaxCliSpec } from './minimax-cli.ts';
 export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts';

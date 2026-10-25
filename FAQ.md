@@ -85,8 +85,18 @@ write / glob / grep 等）的开关。插件会把「只允许 `mcp__dsh-host__*
 仍尝试内置工具，插件会在执行前取消该轮并让它改用宿主工具重试。连续多次违反时本轮会明确失败，
 而不是让内置工具绕过 DSH 的权限与沙箱。
 
-**MiniMax Code 卡片为什么不显示额度？** 官方没有公开额度接口，插件只显示登录区域、CLI 安装状态、
-凭据到期时间和模型目录；积分与限免信息请以 MiniMax 官网为准。
+**MiniMax Code 的额度从哪来？** CLI 本身有一整套账号与配额接口，插件直接复用 mcode 的登录
+凭据调用它们，因此数字与官网控制台一致：`/v1/api/user/info` 取账号，
+`/matrix/api/v1/user/get_user_extra_info` + `/matrix/api/v1/commerce/get_membership_info` 取套餐与
+积分余额，`/v1/api/openplatform/coding_plan/remains` 取 Token Plan 的 5 小时 / 每周窗口。
+前三个走签名网关（`yy` / `x-timestamp` / `x-signature`），remains 只需要 bearer token 加账号的
+`X-Group-Id`。国内站与国际站使用各自的域名，凭据也按区域读取。
+
+卡片会显示：账号名、套餐类型、剩余积分（含购买 / 赠送拆分）、以及每个窗口的剩余百分比、
+重置时间与进度条。没有 Token Plan 的账号会被 remains 接口以 `2062 no active token plan
+subscription` 拒绝，此时卡片只显示积分，不虚构窗口。额度读取失败不会影响对话，卡片会保留
+已读到的账号并给出原因；点击「刷新额度」可重试。凭据过期时先启动一次带该凭据的会话（或重新
+登录），CLI 会自动续期。
 
 **缓存命中一直显示 0%？** v1.0.5 已修。根因不在映射：CLI 每轮都算出了真实用量，但在把用量帧
 送出来之前会**主动清零四个 token 计数**（`input_tokens` / `output_tokens` /

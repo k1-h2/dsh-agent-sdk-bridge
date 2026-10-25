@@ -179,9 +179,24 @@ window.__ModuleLoader__.load({
       minimaxCliFailed: 'CLI 操作失败',
       minimaxShowOutput: '查看输出',
       minimaxHideOutput: '收起输出',
-      minimaxNoUsage: 'MiniMax Code 没有公开额度接口，这里只显示登录与安装状态。',
+      minimaxNoUsage: '登录后会显示账号、套餐与剩余额度。',
       minimaxCliRequired: '请先安装 MiniMax Code CLI，再登录。',
       minimaxExpires: '凭据到期',
+      minimaxAccount: '账号',
+      minimaxAccountUnknown: '未知账号',
+      minimaxPlan: '当前套餐',
+      minimaxPlanTokenPlan: 'Token Plan',
+      minimaxPlanCredits: '积分',
+      minimaxPlanFree: '免费',
+      minimaxCredits: '剩余积分',
+      minimaxCreditsPurchased: '其中购买',
+      minimaxCreditsFree: '其中赠送',
+      minimaxQuotaRemaining: '剩余',
+      minimaxQuotaReset: '重置于',
+      minimaxQuotaUnlimited: '不限',
+      minimaxQuotaNone: '当前账号没有 Token Plan 额度窗口。',
+      minimaxUsageLoading: '正在读取账号与额度…',
+      minimaxUsageFailed: '额度读取失败',
       advancedFields: {
         displayName: '分组名称',
         maxSessions: '并发会话数',
@@ -341,9 +356,24 @@ window.__ModuleLoader__.load({
       minimaxCliFailed: 'CLI action failed',
       minimaxShowOutput: 'Show output',
       minimaxHideOutput: 'Hide output',
-      minimaxNoUsage: 'MiniMax Code has no public quota API; this card shows login and install state only.',
+      minimaxNoUsage: 'Sign in to see the account, plan and remaining quota.',
       minimaxCliRequired: 'Install the MiniMax Code CLI before signing in.',
       minimaxExpires: 'Credential expires',
+      minimaxAccount: 'Account',
+      minimaxAccountUnknown: 'Unknown account',
+      minimaxPlan: 'Plan',
+      minimaxPlanTokenPlan: 'Token Plan',
+      minimaxPlanCredits: 'Credits',
+      minimaxPlanFree: 'Free',
+      minimaxCredits: 'Remaining credits',
+      minimaxCreditsPurchased: 'purchased',
+      minimaxCreditsFree: 'free',
+      minimaxQuotaRemaining: 'remaining',
+      minimaxQuotaReset: 'resets at',
+      minimaxQuotaUnlimited: 'Unlimited',
+      minimaxQuotaNone: 'This account has no Token Plan quota windows.',
+      minimaxUsageLoading: 'Reading the account and quota…',
+      minimaxUsageFailed: 'Could not read the quota',
       advancedFields: {
         displayName: 'Group name',
         maxSessions: 'Concurrent sessions',
@@ -1312,6 +1342,84 @@ window.__ModuleLoader__.load({
 
       const lines = Array.isArray(setup?.lines) ? setup.lines : []
       const setupBusy = busy || runningSetup
+      const account = usage?.account
+      const plan = usage?.plan
+      const credits = usage?.credits
+      const quotas = Array.isArray(usage?.windows) ? usage.windows : []
+      const planLabel = plan?.kind === 'token-plan'
+        ? t('minimaxPlanTokenPlan')
+        : plan?.kind === 'credits' ? t('minimaxPlanCredits') : t('minimaxPlanFree')
+      const timeLabel = ms => {
+        try {
+          return new Date(ms).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        } catch {
+          return String(ms)
+        }
+      }
+
+      const quotaBlock = !signedIn
+        ? h('div', { style: css.note }, installed ? t('minimaxNoUsage') : t('minimaxCliRequired'))
+        : usage === undefined
+          ? h('div', { style: css.note }, t('minimaxUsageLoading'))
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+            h('div', { style: css.usageLine },
+              h('span', { style: css.usageLabel }, t('minimaxAccount')),
+              h('span', { style: css.usageValue }, account?.name ?? account?.email ?? t('minimaxAccountUnknown')),
+            ),
+            h('div', { style: css.usageLine },
+              h('span', { style: css.usageLabel }, t('minimaxPlan')),
+              h('span', { style: css.usageValue }, plan?.name ?? planLabel),
+              plan?.hasTokenPlan === true ? h('span', { style: { ...css.tag, marginLeft: '6px' } }, t('minimaxPlanTokenPlan')) : null,
+              plan?.expiresAt === undefined
+                ? null
+                : h('span', { style: css.note }, `${t('minimaxExpires')} ${dateLabel(plan.expiresAt)}`),
+            ),
+            credits === undefined
+              ? null
+              : h('div', { style: css.usageLine },
+                  h('span', { style: css.usageLabel }, t('minimaxCredits')),
+                  h('span', { style: css.usageValue }, creditsOf(credits.remaining)),
+                  typeof credits.purchasedRemaining === 'number' && credits.purchasedRemaining > 0
+                    ? h('span', { style: css.note }, `${t('minimaxCreditsPurchased')} ${creditsOf(credits.purchasedRemaining)}`)
+                    : null,
+                  typeof credits.freeRemaining === 'number' && credits.freeRemaining > 0
+                    ? h('span', { style: css.note }, `${t('minimaxCreditsFree')} ${creditsOf(credits.freeRemaining)}`)
+                    : null,
+                ),
+            quotas.length === 0
+              ? h('div', { style: css.note }, t('minimaxQuotaNone'))
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '7px' } },
+                  quotas.map(window => {
+                    const remaining = typeof window.remainingPercent === 'number' ? window.remainingPercent : undefined
+                    const used = remaining === undefined ? undefined : 100 - remaining
+                    return h('div', { key: window.id, style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+                      h('div', { style: css.usageLine },
+                        h('span', { style: css.usageLabel }, window.label),
+                        h('span', { style: css.usageValue }, window.unlimited
+                          ? t('minimaxQuotaUnlimited')
+                          : remaining === undefined
+                            ? (window.remainingCount === undefined ? '—' : `${creditsOf(window.remainingCount)} / ${creditsOf(window.totalCount ?? 0)}`)
+                            : `${t('minimaxQuotaRemaining')} ${remaining}%`),
+                        typeof window.resetAt === 'number'
+                          ? h('span', { style: css.note }, `${t('minimaxQuotaReset')} ${timeLabel(window.resetAt)}`)
+                          : null,
+                      ),
+                      used === undefined || window.unlimited
+                        ? null
+                        : h('div', { style: css.progressOuter },
+                            h('div', {
+                              style: {
+                                ...css.progressInner,
+                                width: `${used}%`,
+                                ...(remaining !== undefined && remaining < 20 ? css.progressDanger : {}),
+                              },
+                            }),
+                          ),
+                    )
+                  }),
+                ),
+            usage?.error !== undefined ? h('div', { style: css.err }, `${t('minimaxUsageFailed')}：${usage.error}`) : null,
+          )
 
       return h('div', { style: css.usageCard },
         h('div', { style: css.usageHead },
@@ -1339,9 +1447,7 @@ window.__ModuleLoader__.load({
             onClick: () => { if (signedIn) void logout(); else void startLogin() },
           }, signingIn ? t('minimaxLoggingIn') : signedIn ? t('minimaxLogout') : t('minimaxLogin')),
         ),
-        !installed && !signedIn
-          ? h('div', { style: css.note }, t('minimaxCliRequired'))
-          : h('div', { style: css.note }, t('minimaxNoUsage')),
+        quotaBlock,
         typeof auth?.expiresAt === 'number'
           ? h('div', { style: css.usageFoot },
               h('span', null, `${t('minimaxExpires')} ${dateLabel(auth.expiresAt)}`),

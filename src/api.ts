@@ -370,6 +370,7 @@ export async function handleApi(
           const result = startMinimaxSetup(parsed.mode, code => {
             if (code !== 0) return
             mm.invalidateCatalog()
+            mm.invalidateUsage()
           })
           if (!result.started) {
             send(res, result.reason === 'busy' ? 409 : 501, { error: result.error })

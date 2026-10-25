@@ -76,6 +76,16 @@
   与 `--ignore-scripts=false`，否则 npm 12 会跳过 better-sqlite3 的原生构建。
   `MCODE_CLI_PATH` 可指向 `cli.js` 或可执行文件；Windows 上优先解析 npm `.cmd` shim 背后的
   `cli.js`，避免 cmd.exe 夹在 ACP 的 stdio 之间。
+- **MiniMax 的额度**：`minimaxUsage()` 读 CLI 的 OAuth 凭据
+  （`~/.minimax/auth/prod/<region>/mcode-public/auth.json`）后调用 mcode 自己的接口：
+  `/v1/api/user/info`（账号）、`/matrix/api/v1/user/get_user_extra_info`（个人 workspace 与
+  `op_group_id`）、`/matrix/api/v1/commerce/get_membership_info`（套餐、积分、是否订阅 Token Plan）、
+  `/v1/api/openplatform/coding_plan/remains`（5 小时 / 每周窗口）。前三个是签名网关，签名算法与
+  CLI 一致：`yy = md5(encodeURIComponent(path+search) + '_' + body + md5(String(nowMs)) + 'ooui')`，
+  `x-signature = md5(seconds + salt + body)`；remains 只需 bearer token 与 `X-Group-Id`。
+  非订阅账号会收到 `base_resp.status_code = 2062`，此时不生成窗口，只显示积分。
+  结果缓存 60 秒（`MINIMAX_USAGE_CACHE_TTL_MS`），登录、登出、CLI 变更都会清缓存。
+  映射逻辑抽成 `minimaxUsageFromParts()`，可脱离网络单测。
 - **额度**：`QoderUsage` 起一个不跑模型轮次的短命 `query()`，调用 SDK 的 `getUsageInfo()`；
   CLI 用自己的凭证查额度并返回与官方客户端一致的结构，插件只做展示与 1 分钟缓存。
 - **版本开关**：`cnEnabled` / `intlEnabled` / `codebuddyEnabled` / `minimaxEnabled` 是结构字段。

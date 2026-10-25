@@ -18,7 +18,8 @@ import type { MinimaxRegion } from './brand.ts'
 import {
   MinimaxAuth, MinimaxCatalog, MinimaxMcpServer, MinimaxSessionManager,
   MINIMAX_CACHE_TTL_MS, MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS,
-  MINIMAX_FETCH_TIMEOUT_MS, minimaxColdStream, minimaxSignedIn,
+  MINIMAX_FETCH_TIMEOUT_MS, invalidateMinimaxUsage, minimaxColdStream, minimaxSignedIn,
+  minimaxUsage,
 } from './minimax.ts'
 import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts'
 import { resolveMinimaxCli } from './minimax-cli.ts'
@@ -146,20 +147,34 @@ export class MinimaxAdapter extends LlmAdapter {
     this.catalog.invalidate(region)
   }
 
-  /** Login status, installer state and (when signed in) the account summary. */
+  /** Login status, installer state and (when signed in) the account's quota. */
   async usageInfo(fresh = false, region?: MinimaxRegion): Promise<MinimaxUsageSnapshot> {
-    void fresh
     const target = region ?? this.region
     const installed = resolveMinimaxCli() !== undefined
     const status = this.auth.status(target)
-    return {
-      at: Date.now(),
-      region: target,
-      signedIn: status.signedIn || minimaxSignedIn(target),
-      installed,
-      ...installed ? {} : { error: '未安装 MiniMax Code CLI（mcode）。' },
-      ...status.error === undefined ? {} : { error: status.error },
+    const signedIn = status.signedIn || minimaxSignedIn(target)
+    if (!signedIn) {
+      return {
+        at: Date.now(),
+        region: target,
+        signedIn: false,
+        installed,
+        ...installed ? {} : { error: '未安装 MiniMax Code CLI（mcode）。' },
+        ...status.error === undefined ? {} : { error: status.error },
+      }
     }
+    const snapshot = await minimaxUsage(target, { fresh })
+    return {
+      ...snapshot,
+      signedIn: true,
+      installed,
+      ...snapshot.error !== undefined || status.error === undefined ? {} : { error: status.error },
+    }
+  }
+
+  /** Drop cached quota readings (after a login, logout or CLI change). */
+  invalidateUsage(region?: MinimaxRegion): void {
+    invalidateMinimaxUsage(region)
   }
 
   /** Login progress for one region; the page polls this. */
@@ -172,6 +187,7 @@ export class MinimaxAdapter extends LlmAdapter {
       if (!ok) return
       this.sessions.closeAll()
       this.invalidateCatalog(region)
+      this.invalidateUsage(region)
     })
   }
 
@@ -179,6 +195,7 @@ export class MinimaxAdapter extends LlmAdapter {
     const result = await this.auth.logout(region)
     this.sessions.closeAll()
     this.invalidateCatalog(region)
+    this.invalidateUsage(region)
     return result
   }
 

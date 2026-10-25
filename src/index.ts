@@ -84,10 +84,12 @@ export {
   MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager,
   minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand,
   isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions,
-  MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS,
+  minimaxUsage, minimaxUsageFromParts, invalidateMinimaxUsage,
+  MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, MINIMAX_USAGE_CACHE_TTL_MS,
 } from './minimax.ts'
 export type {
-  MinimaxAuthStatus, MinimaxMcpToolResult, MinimaxModel, MinimaxUsageSnapshot,
+  MinimaxAccountInfo, MinimaxAuthStatus, MinimaxCreditInfo, MinimaxMcpToolResult,
+  MinimaxModel, MinimaxPlanInfo, MinimaxQuotaWindow, MinimaxUsageSnapshot,
 } from './minimax.ts'
 export {
   MinimaxCliSetup, readMinimaxSetupStatus, resolveMinimaxCli, startMinimaxSetup, stopMinimaxSetup,

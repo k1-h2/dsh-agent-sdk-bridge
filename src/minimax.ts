@@ -24,7 +24,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -91,6 +91,47 @@ export interface MinimaxAuthStatus {
   error?: string
 }
 
+/** One rolling quota window reported by the coding-plan endpoint. */
+export interface MinimaxQuotaWindow {
+  id: string
+  label: string
+  /** Percent still available; absent when the CLI reports no percentage. */
+  remainingPercent?: number
+  /** When this window resets. */
+  resetAt?: number
+  /** The plan does not count this window (status 3). */
+  unlimited: boolean
+  /** Remaining units, when the endpoint reports a count instead of a ratio. */
+  remainingCount?: number
+  totalCount?: number
+}
+
+/** Which quota model the account is on. */
+export interface MinimaxPlanInfo {
+  kind: 'token-plan' | 'credits' | 'free'
+  hasTokenPlan: boolean
+  /** Plan name the account itself reports, when it has one. */
+  name?: string
+  tier?: string
+  expiresAt?: number
+  subscriptionType?: string
+}
+
+/** Credit balance from the membership record. */
+export interface MinimaxCreditInfo {
+  remaining: number
+  purchasedRemaining?: number
+  freeRemaining?: number
+}
+
+/** Display identity of the signed-in MiniMax account. */
+export interface MinimaxAccountInfo {
+  name?: string
+  email?: string
+  avatar?: string
+  userId?: string
+}
+
 /** What the settings page shows for a MiniMax account. */
 export interface MinimaxUsageSnapshot {
   at: number
@@ -99,6 +140,11 @@ export interface MinimaxUsageSnapshot {
   /** Whether the `mcode` executable was found. */
   installed: boolean
   error?: string
+  account?: MinimaxAccountInfo
+  plan?: MinimaxPlanInfo
+  credits?: MinimaxCreditInfo
+  /** Coding-plan windows, empty for accounts without a token plan. */
+  windows?: MinimaxQuotaWindow[]
 }
 
 /** The per-user CLI state directory. */
@@ -111,6 +157,12 @@ export function minimaxDataDir(): string {
 export function minimaxAuthStatePath(region: MinimaxRegion): string {
   const buildEnv = process.env.MAVIS_BUILD_ENV?.trim() || 'prod'
   return join(minimaxDataDir(), 'auth', buildEnv, minimaxCliRegion(region), 'mcode-public', 'auth-state.json')
+}
+
+/** Path of the credential file the CLI writes its OAuth token to. */
+function minimaxAuthRecordPath(region: MinimaxRegion): string {
+  const buildEnv = process.env.MAVIS_BUILD_ENV?.trim() || 'prod'
+  return join(minimaxDataDir(), 'auth', buildEnv, minimaxCliRegion(region), 'mcode-public', 'auth.json')
 }
 
 /** The CLI command name, for error text. */
@@ -201,6 +253,446 @@ function readAuthState(region: MinimaxRegion): { status?: string, expiresAtMs?: 
 /** Whether the region has a stored login. */
 export function minimaxSignedIn(region: MinimaxRegion): boolean {
   return readAuthState(region)?.status === 'authenticated'
+}
+
+// ── Account and quota ──────────────────────────────────────────────────────
+//
+// The CLI's own account calls run against MiniMax's signed gateway. Its web
+// console and TUI read the same endpoints, so the numbers here match what the
+// user sees on minimax's site: a coding-plan subscription exposes rolling
+// windows, a credit balance exposes the remaining amount.
+//
+// The signed gateway needs `yy`/`x-timestamp`/`x-signature` derived with the
+// CLI's own salt; the quota endpoint takes a plain bearer token plus the
+// account's `op_group_id`.
+
+/** Signed account gateway (the CLI's `agent` host). */
+const MINIMAX_ACCOUNT_HOSTS: Readonly<Record<MinimaxRegion, string>> = {
+  cn: 'https://agent.minimaxi.com',
+  global: 'https://agent.minimax.io',
+}
+
+/** Host serving the coding-plan quota. */
+const MINIMAX_QUOTA_HOSTS: Readonly<Record<MinimaxRegion, string>> = {
+  cn: 'https://www.minimaxi.com',
+  global: 'https://platform.minimax.io',
+}
+
+/** Salt the CLI signs account requests with. */
+const MINIMAX_ACCOUNT_SALT = 'I*7Cf%WZ#S&%1RlZJ&C2'
+/** Bound for one account/quota read. */
+const MINIMAX_USAGE_TIMEOUT_MS = 15_000
+/** How long one quota reading stays fresh. */
+export const MINIMAX_USAGE_CACHE_TTL_MS = 60_000
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+/** Read the OAuth access token the CLI stored for one region. */
+function readStoredToken(region: MinimaxRegion): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(minimaxAuthRecordPath(region), 'utf8')) as {
+      records?: Record<string, { accessToken?: unknown }>
+    }
+    for (const record of Object.values(parsed.records ?? {})) {
+      const token = record?.accessToken
+      if (typeof token === 'string' && token.trim().length > 0) return token.trim()
+    }
+  } catch {
+    // Missing or unreadable; the caller reports a re-login.
+  }
+  return undefined
+}
+
+function minimaxMd5(value: string): string {
+  return createHash('md5').update(value).digest('hex')
+}
+
+/** Build one signed-gateway URL exactly as the CLI does. */
+function minimaxAccountUrl(
+  region: MinimaxRegion,
+  path: string,
+  nowMs: number,
+  realUserId?: string,
+): URL {
+  const url = new URL(path, MINIMAX_ACCOUNT_HOSTS[region])
+  const lang = region === 'cn' ? 'zh' : 'en'
+  url.search = new URLSearchParams({
+    device_platform: 'mcode',
+    biz_id: '3',
+    app_id: '3001',
+    version_code: '22201',
+    unix: String(nowMs),
+    timezone_offset: String(new Date().getTimezoneOffset() * -60),
+    sys_language: lang,
+    lang,
+    device_id: '0',
+    os_name: process.platform,
+    browser_name: 'mcode',
+    user_id: realUserId?.trim() || '0',
+    client: 'mcode',
+  }).toString()
+  return url
+}
+
+interface MinimaxAccountCall {
+  method?: 'GET' | 'POST'
+  body?: Record<string, unknown>
+  realUserId?: string
+  token: string
+  fetchImpl: typeof fetch
+  signal?: AbortSignal
+}
+
+/** One request to the signed gateway, with the CLI's signature headers. */
+async function minimaxAccountCall(
+  region: MinimaxRegion,
+  path: string,
+  call: MinimaxAccountCall,
+): Promise<Record<string, unknown>> {
+  const now = Date.now()
+  const url = minimaxAccountUrl(region, path, now, call.realUserId)
+  const target = `${url.pathname}${url.search}`
+  const body = call.body === undefined ? '' : JSON.stringify(call.body)
+  const seconds = Math.floor(now / 1000)
+  const response = await call.fetchImpl(url, {
+    method: call.method ?? 'GET',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'MiniMaxCode',
+      Authorization: `Bearer ${call.token}`,
+      yy: minimaxMd5(`${encodeURIComponent(target)}_${body}${minimaxMd5(String(now))}ooui`),
+      'x-timestamp': String(seconds),
+      'x-signature': minimaxMd5(`${seconds}${MINIMAX_ACCOUNT_SALT}${body}`),
+    },
+    ...body === '' ? {} : { body },
+    ...call.signal === undefined ? {} : { signal: call.signal },
+  })
+  if (!response.ok) {
+    throw new Error(response.status === 401 || response.status === 403
+      ? 'MiniMax 登录已过期：先发一条消息让 CLI 自动续期，或重新登录后再刷新额度。'
+      : `MiniMax 账号接口返回 HTTP ${response.status}。`)
+  }
+  const payload = asRecord(await response.json())
+  if (payload === undefined) throw new Error('MiniMax 账号接口返回了无法解析的响应。')
+  const statusInfo = asRecord(payload.statusInfo)
+  const statusCode = asNumber(statusInfo?.code)
+  if (statusCode !== undefined && statusCode !== 0) {
+    throw new Error(asString(statusInfo?.message) ?? `MiniMax 账号接口错误 ${statusCode}。`)
+  }
+  const baseResp = asRecord(payload.base_resp)
+  const baseCode = asNumber(baseResp?.status_code)
+  if (baseCode !== undefined && baseCode !== 0) {
+    throw new Error(asString(baseResp?.status_msg) ?? `MiniMax 账号接口错误 ${baseCode}。`)
+  }
+  return payload
+}
+
+/** One window's numbers, named the way the coding-plan endpoint reports them. */
+function quotaWindow(
+  bucket: Record<string, unknown>,
+  kind: 'interval' | 'weekly',
+): Omit<MinimaxQuotaWindow, 'id' | 'label'> | undefined {
+  const prefix = kind === 'interval' ? 'current_interval' : 'current_weekly'
+  const status = asNumber(bucket[`${prefix}_status`])
+  const unlimited = status === 3
+  const percent = asNumber(bucket[`${prefix}_remaining_percent`])
+  const total = asNumber(bucket[`${prefix}_total_count`])
+  const used = asNumber(bucket[`${prefix}_usage_count`])
+  // The endpoint calls the count field `usage_count`, but the CLI reads it as
+  // the remaining amount; keep that interpretation so the card agrees with the
+  // TUI. A percentage, when present, always wins.
+  const remaining = percent ?? (total !== undefined && total > 0 && used !== undefined
+    ? (used / total) * 100
+    : undefined)
+  const resetAt = asNumber(bucket[kind === 'interval' ? 'end_time' : 'weekly_end_time'])
+  if (remaining === undefined && !unlimited && (resetAt === undefined || resetAt <= 0)) return undefined
+  return {
+    ...remaining === undefined || unlimited
+      ? {}
+      : { remainingPercent: Math.round(Math.min(100, Math.max(0, remaining))) },
+    ...resetAt !== undefined && resetAt > 0 ? { resetAt } : {},
+    unlimited,
+    ...kind === 'interval' && used !== undefined ? { remainingCount: Math.max(0, used) } : {},
+    ...kind === 'interval' && total !== undefined ? { totalCount: Math.max(0, total) } : {},
+  }
+}
+
+/** Turn one `model_remains` bucket into its 5-hour and weekly rows. */
+function windowRows(
+  id: string,
+  label: string,
+  bucket: Record<string, unknown>,
+): MinimaxQuotaWindow[] {
+  const rows: MinimaxQuotaWindow[] = []
+  const interval = quotaWindow(bucket, 'interval')
+  if (interval !== undefined) rows.push({ id: `${id}:5h`, label: `${label} · 5 小时`, ...interval })
+  const weekly = quotaWindow(bucket, 'weekly')
+  if (weekly !== undefined) rows.push({ id: `${id}:7d`, label: `${label} · 本周`, ...weekly })
+  return rows
+}
+
+/** Parse `/v1/api/openplatform/coding_plan/remains`. */
+function parseMinimaxRemains(payload: Record<string, unknown> | undefined): MinimaxQuotaWindow[] {
+  if (payload === undefined) return []
+  const baseResp = asRecord(payload.base_resp)
+  const code = asNumber(baseResp?.status_code)
+  // 2062 is "no active token plan", not an error worth showing.
+  if (code !== undefined && code !== 0) return []
+  const buckets = Array.isArray(payload.model_remains)
+    ? payload.model_remains
+        .map(asRecord)
+        .filter((bucket): bucket is Record<string, unknown> => bucket !== undefined)
+    : []
+  const rows: MinimaxQuotaWindow[] = []
+  const general = buckets[0]
+  if (general !== undefined) rows.push(...windowRows('general', '通用', general))
+  const video = buckets.find(bucket => {
+    const name = asString(bucket.model_name) ?? ''
+    return /video/i.test(name) && (asNumber(bucket.current_interval_total_count) ?? 0) > 0
+  })
+  if (video !== undefined) rows.push(...windowRows('video', '视频', video))
+  return rows
+}
+
+/**
+ * Build a snapshot from the three account documents.
+ *
+ * Split out from the network path so the mapping is testable without a live
+ * account: the membership record is the source of the plan and credit
+ * balance, `remains` only exists for token-plan subscribers.
+ */
+export function minimaxUsageFromParts(parts: {
+  region: MinimaxRegion
+  at?: number
+  installed?: boolean
+  userInfo?: Record<string, unknown>
+  workspaces?: readonly Record<string, unknown>[]
+  membership?: Record<string, unknown>
+  remains?: Record<string, unknown>
+}): MinimaxUsageSnapshot {
+  const userInfo = parts.userInfo ?? {}
+  const membership = parts.membership ?? {}
+  const personal = parts.workspaces?.find(workspace => asNumber(workspace.workspace_type) === 0)
+    ?? parts.workspaces?.[0]
+
+  const name = asString(userInfo.name)
+  const email = asString(userInfo.email)
+  const avatar = asString(userInfo.avatar)
+  const userId = asString(userInfo.userID)
+  const account = name === undefined && email === undefined && avatar === undefined && userId === undefined
+    ? undefined
+    : {
+        ...name === undefined ? {} : { name },
+        ...email === undefined ? {} : { email },
+        ...avatar === undefined ? {} : { avatar },
+        ...userId === undefined ? {} : { userId },
+      }
+
+  const summary = asRecord(membership.op_credit_summary) ?? asRecord(personal?.op_credit_summary)
+  const remaining = asNumber(summary?.total_remaining_amount)
+    ?? asNumber(personal?.opcredit_balance)
+    ?? asNumber(membership.opcredit_balance)
+  const purchased = asNumber(summary?.purchased_remaining_amount)
+  const free = asNumber(summary?.free_remaining_amount)
+  const credits = remaining === undefined
+    ? undefined
+    : {
+        remaining,
+        ...purchased === undefined ? {} : { purchasedRemaining: purchased },
+        ...free === undefined ? {} : { freeRemaining: free },
+      }
+
+  const hasTokenPlan = membership.has_token_plan === true || personal?.has_token_plan === true
+  const kind = hasTokenPlan ? 'token-plan' : credits !== undefined && credits.remaining > 0 ? 'credits' : 'free'
+  const planName = asString(membership.plan_name) ?? asString(personal?.plan_name)
+  const tier = asString(membership.token_plan_tier) ?? asString(personal?.token_plan_tier)
+  const expiresRaw = asNumber(membership.token_plan_expires_at)
+    ?? asNumber(personal?.token_plan_expires_at)
+    ?? asNumber(membership.expires_at)
+  const expiresAt = expiresRaw !== undefined && expiresRaw > 0 ? expiresRaw : undefined
+  const subscriptionType = asString(membership.subscription_type)
+  const windows = parseMinimaxRemains(parts.remains)
+
+  return {
+    at: parts.at ?? Date.now(),
+    region: parts.region,
+    signedIn: true,
+    installed: parts.installed ?? true,
+    ...account === undefined ? {} : { account },
+    plan: {
+      kind,
+      hasTokenPlan,
+      ...planName === undefined ? {} : { name: planName },
+      ...tier === undefined ? {} : { tier },
+      ...expiresAt === undefined ? {} : { expiresAt },
+      ...subscriptionType === undefined ? {} : { subscriptionType },
+    },
+    ...credits === undefined ? {} : { credits },
+    ...windows.length === 0 ? {} : { windows },
+  }
+}
+
+/** Read the quota for a token-plan subscriber; a plain account has none. */
+async function readMinimaxRemains(
+  region: MinimaxRegion,
+  token: string,
+  groupId: string,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<Record<string, unknown> | undefined> {
+  const response = await fetchImpl(`${MINIMAX_QUOTA_HOSTS[region]}/v1/api/openplatform/coding_plan/remains`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Group-Id': groupId,
+    },
+    signal,
+  })
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('MiniMax 登录已过期：先发一条消息让 CLI 自动续期，或重新登录后再刷新额度。')
+    }
+    return undefined
+  }
+  return asRecord(await response.json())
+}
+
+const usageCache = new Map<MinimaxRegion, { at: number, snapshot: MinimaxUsageSnapshot }>()
+const usageInflight = new Map<MinimaxRegion, Promise<MinimaxUsageSnapshot>>()
+
+/** Drop a cached quota reading, so the next request re-reads it. */
+export function invalidateMinimaxUsage(region?: MinimaxRegion): void {
+  if (region === undefined) {
+    usageCache.clear()
+    return
+  }
+  usageCache.delete(region)
+}
+
+/**
+ * Read one region's account, plan and quota.
+ *
+ * A failed account call keeps the login state and reports the reason in
+ * `error`; the settings card shows the account it already knows with that
+ * message instead of silently claiming nothing is configured.
+ */
+export async function minimaxUsage(
+  region: MinimaxRegion,
+  options: {
+    fresh?: boolean
+    token?: string
+    fetchImpl?: typeof fetch
+    signal?: AbortSignal
+  } = {},
+): Promise<MinimaxUsageSnapshot> {
+  const installed = resolveMinimaxCli() !== undefined
+  const token = options.token ?? readStoredToken(region)
+  const signedIn = token !== undefined || minimaxSignedIn(region)
+  if (!signedIn) {
+    return { at: Date.now(), region, signedIn: false, installed }
+  }
+  if (token === undefined) {
+    return {
+      at: Date.now(),
+      region,
+      signedIn: true,
+      installed,
+      error: '未找到 MiniMax 登录凭据，请重新登录。',
+    }
+  }
+  if (options.token === undefined && options.fresh !== true) {
+    const cached = usageCache.get(region)
+    if (cached !== undefined && Date.now() - cached.at < MINIMAX_USAGE_CACHE_TTL_MS) return cached.snapshot
+  }
+  let pending = usageInflight.get(region)
+  if (pending === undefined) {
+    pending = readUsage(region, token, installed, options)
+      .finally(() => { usageInflight.delete(region) })
+    usageInflight.set(region, pending)
+  }
+  const snapshot = await pending
+  if (snapshot.error === undefined && options.token === undefined) {
+    usageCache.set(region, { at: snapshot.at, snapshot })
+  }
+  return snapshot
+}
+
+async function readUsage(
+  region: MinimaxRegion,
+  token: string,
+  installed: boolean,
+  options: { fetchImpl?: typeof fetch, signal?: AbortSignal },
+): Promise<MinimaxUsageSnapshot> {
+  const timeout = AbortSignal.timeout(MINIMAX_USAGE_TIMEOUT_MS)
+  const signal = options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])
+  const fetchImpl = options.fetchImpl ?? fetch
+  try {
+    const info = await minimaxAccountCall(region, '/v1/api/user/info', { token, fetchImpl, signal })
+    const data = asRecord(info.data)
+    const userInfo = asRecord(data?.userInfo) ?? asRecord(info.userInfo) ?? {}
+    const realUserId = asString(userInfo.realUserID) ?? asString(userInfo.real_user_id)
+    const extra = await minimaxAccountCall(region, '/matrix/api/v1/user/get_user_extra_info', {
+      method: 'POST',
+      body: {},
+      realUserId,
+      token,
+      fetchImpl,
+      signal,
+    })
+    const rawWorkspaces = Array.isArray(extra.workspaces)
+      ? extra.workspaces
+      : Array.isArray(asRecord(extra.data)?.workspaces)
+        ? (asRecord(extra.data)?.workspaces as unknown[])
+        : []
+    const workspaces = rawWorkspaces
+      .map(asRecord)
+      .filter((workspace): workspace is Record<string, unknown> => workspace !== undefined)
+    const personal = workspaces.find(workspace => asNumber(workspace.workspace_type) === 0)
+      ?? workspaces[0]
+    const workspaceId = asNumber(personal?.workspace_id)
+    const membership = workspaceId === undefined
+      ? {}
+      : await minimaxAccountCall(region, '/matrix/api/v1/commerce/get_membership_info', {
+          method: 'POST',
+          body: { workspace_id: workspaceId },
+          realUserId,
+          token,
+          fetchImpl,
+          signal,
+        })
+    const groupId = asString(membership.op_group_id) ?? asString(personal?.op_group_id)
+    const hasTokenPlan = membership.has_token_plan === true || personal?.has_token_plan === true
+    const remains = hasTokenPlan && groupId !== undefined
+      ? await readMinimaxRemains(region, token, groupId, fetchImpl, signal)
+      : undefined
+    return minimaxUsageFromParts({ region, installed, userInfo, workspaces, membership, remains })
+  } catch (error) {
+    return {
+      at: Date.now(),
+      region,
+      signedIn: true,
+      installed,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 /** Trim CLI output to a short, token-free sentence. */

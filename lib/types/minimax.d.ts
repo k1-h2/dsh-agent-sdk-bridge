@@ -67,6 +67,43 @@ export interface MinimaxAuthStatus {
     expiresAt?: number;
     error?: string;
 }
+/** One rolling quota window reported by the coding-plan endpoint. */
+export interface MinimaxQuotaWindow {
+    id: string;
+    label: string;
+    /** Percent still available; absent when the CLI reports no percentage. */
+    remainingPercent?: number;
+    /** When this window resets. */
+    resetAt?: number;
+    /** The plan does not count this window (status 3). */
+    unlimited: boolean;
+    /** Remaining units, when the endpoint reports a count instead of a ratio. */
+    remainingCount?: number;
+    totalCount?: number;
+}
+/** Which quota model the account is on. */
+export interface MinimaxPlanInfo {
+    kind: 'token-plan' | 'credits' | 'free';
+    hasTokenPlan: boolean;
+    /** Plan name the account itself reports, when it has one. */
+    name?: string;
+    tier?: string;
+    expiresAt?: number;
+    subscriptionType?: string;
+}
+/** Credit balance from the membership record. */
+export interface MinimaxCreditInfo {
+    remaining: number;
+    purchasedRemaining?: number;
+    freeRemaining?: number;
+}
+/** Display identity of the signed-in MiniMax account. */
+export interface MinimaxAccountInfo {
+    name?: string;
+    email?: string;
+    avatar?: string;
+    userId?: string;
+}
 /** What the settings page shows for a MiniMax account. */
 export interface MinimaxUsageSnapshot {
     at: number;
@@ -75,6 +112,11 @@ export interface MinimaxUsageSnapshot {
     /** Whether the `mcode` executable was found. */
     installed: boolean;
     error?: string;
+    account?: MinimaxAccountInfo;
+    plan?: MinimaxPlanInfo;
+    credits?: MinimaxCreditInfo;
+    /** Coding-plan windows, empty for accounts without a token plan. */
+    windows?: MinimaxQuotaWindow[];
 }
 /** The per-user CLI state directory. */
 export declare function minimaxDataDir(): string;
@@ -90,6 +132,39 @@ export declare function hostMcpToolName(name: string): string;
 export declare function minimaxModelsFromConfigOptions(options: readonly any[] | null | undefined): MinimaxModel[];
 /** Whether the region has a stored login. */
 export declare function minimaxSignedIn(region: MinimaxRegion): boolean;
+/** How long one quota reading stays fresh. */
+export declare const MINIMAX_USAGE_CACHE_TTL_MS = 60000;
+/**
+ * Build a snapshot from the three account documents.
+ *
+ * Split out from the network path so the mapping is testable without a live
+ * account: the membership record is the source of the plan and credit
+ * balance, `remains` only exists for token-plan subscribers.
+ */
+export declare function minimaxUsageFromParts(parts: {
+    region: MinimaxRegion;
+    at?: number;
+    installed?: boolean;
+    userInfo?: Record<string, unknown>;
+    workspaces?: readonly Record<string, unknown>[];
+    membership?: Record<string, unknown>;
+    remains?: Record<string, unknown>;
+}): MinimaxUsageSnapshot;
+/** Drop a cached quota reading, so the next request re-reads it. */
+export declare function invalidateMinimaxUsage(region?: MinimaxRegion): void;
+/**
+ * Read one region's account, plan and quota.
+ *
+ * A failed account call keeps the login state and reports the reason in
+ * `error`; the settings card shows the account it already knows with that
+ * message instead of silently claiming nothing is configured.
+ */
+export declare function minimaxUsage(region: MinimaxRegion, options?: {
+    fresh?: boolean;
+    token?: string;
+    fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+}): Promise<MinimaxUsageSnapshot>;
 /**
  * Browser login/logout, one run per region.
  *

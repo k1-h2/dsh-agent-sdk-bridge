@@ -56,8 +56,10 @@ export declare class MinimaxAdapter extends LlmAdapter {
     /** Why the last catalog read failed, for the page's guidance. */
     catalogError(region?: MinimaxRegion): string | undefined;
     invalidateCatalog(region?: MinimaxRegion): void;
-    /** Login status, installer state and (when signed in) the account summary. */
+    /** Login status, installer state and (when signed in) the account's quota. */
     usageInfo(fresh?: boolean, region?: MinimaxRegion): Promise<MinimaxUsageSnapshot>;
+    /** Drop cached quota readings (after a login, logout or CLI change). */
+    invalidateUsage(region?: MinimaxRegion): void;
     /** Login progress for one region; the page polls this. */
     authStatus(region: MinimaxRegion): ReturnType<MinimaxAuth['status']>;
     startLogin(region: MinimaxRegion): ReturnType<MinimaxAuth['start']>;
