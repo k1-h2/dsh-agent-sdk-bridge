@@ -181,7 +181,11 @@ window.__ModuleLoader__.load({
       minimaxHideOutput: '收起输出',
       minimaxNoUsage: '登录后会显示账号、套餐与剩余额度。',
       minimaxCliRequired: '请先安装 MiniMax Code CLI，再登录。',
-      minimaxExpires: '凭据到期',
+      minimaxPlanExpires: '套餐到期',
+      minimaxTokenRemaining: '访问令牌剩余 {n} 分钟',
+      minimaxTokenRemainingHours: '访问令牌剩余 {n} 小时',
+      minimaxTokenExpired: '访问令牌已过期',
+      minimaxTokenRenew: 'CLI 会在下次调用时自动续期，无需重新登录',
       minimaxAccount: '账号',
       minimaxAccountUnknown: '未知账号',
       minimaxPlan: '当前套餐',
@@ -362,7 +366,11 @@ window.__ModuleLoader__.load({
       minimaxHideOutput: 'Hide output',
       minimaxNoUsage: 'Sign in to see the account, plan and remaining quota.',
       minimaxCliRequired: 'Install the MiniMax Code CLI before signing in.',
-      minimaxExpires: 'Credential expires',
+      minimaxPlanExpires: 'Plan expires',
+      minimaxTokenRemaining: 'Access token: {n} min left',
+      minimaxTokenRemainingHours: 'Access token: {n} h left',
+      minimaxTokenExpired: 'Access token expired',
+      minimaxTokenRenew: 'the CLI renews it automatically on the next call; no re-login needed',
       minimaxAccount: 'Account',
       minimaxAccountUnknown: 'Unknown account',
       minimaxPlan: 'Plan',
@@ -696,6 +704,22 @@ window.__ModuleLoader__.load({
     /** A short local date for an epoch-millisecond value. */
     function dateLabel(ms) {
       try { return new Date(ms).toLocaleDateString('zh-CN') } catch { return String(ms) }
+    }
+
+    /**
+     * How long a short-lived credential still has, phrased as a countdown.
+     *
+     * The MiniMax CLI's OAuth access token lives about an hour and the CLI
+     * renews it on its next call, so an absolute date is always "today" and
+     * reads like a problem that does not exist. A countdown carries the
+     * information the date pretended to give.
+     */
+    function tokenExpiryText(t, ms, now = Date.now()) {
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return t('minimaxTokenExpired')
+      const minutes = Math.round((ms - now) / 60_000)
+      if (minutes <= 0) return t('minimaxTokenExpired')
+      if (minutes < 60) return t('minimaxTokenRemaining').replace('{n}', String(minutes))
+      return t('minimaxTokenRemainingHours').replace('{n}', String(Math.floor(minutes / 60)))
     }
 
     /**
@@ -1414,7 +1438,7 @@ window.__ModuleLoader__.load({
                         plan.hasTokenPlan === true ? h('span', { style: { ...css.tag, marginLeft: '6px' } }, t('minimaxPlanTokenPlan')) : null,
                         plan.expiresAt === undefined
                           ? null
-                          : h('span', { style: css.note }, `${t('minimaxExpires')} ${dateLabel(plan.expiresAt)}`),
+                          : h('span', { style: css.note }, `${t('minimaxPlanExpires')} ${dateLabel(plan.expiresAt)}`),
                       ),
                   credits === undefined
                     ? null
@@ -1492,7 +1516,8 @@ window.__ModuleLoader__.load({
         quotaBlock,
         typeof auth?.expiresAt === 'number' && !blocked
           ? h('div', { style: css.usageFoot },
-              h('span', null, `${t('minimaxExpires')} ${dateLabel(auth.expiresAt)}`),
+              h('span', null, tokenExpiryText(t, auth.expiresAt)),
+              h('span', { style: css.note }, t('minimaxTokenRenew')),
             )
           : null,
         typeof auth?.url === 'string' && signingIn
@@ -2404,6 +2429,7 @@ window.__ModuleLoader__.load({
     exports.__test = {
       windowLabel, priceSuffix, ADVANCED, BRANDS, zh, en,
       SettingsPage, BundleSettings, UsageCard, CodeBuddyCard, QuotaLine, creditsOf, neverExpires,
+      dateLabel, tokenExpiryText,
       readCache, writeCache,
     }
     return module.exports
