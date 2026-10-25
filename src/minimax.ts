@@ -336,6 +336,14 @@ export class MinimaxRegionBlockedError extends Error {
 }
 
 const regionAccessCache = new Map<MinimaxRegion, { at: number, blocked: boolean }>()
+/**
+ * Probes already on the wire.
+ *
+ * A region switch asks for the quota and the catalog at the same time, and
+ * both need the same verdict; sharing the request keeps them from disagreeing
+ * and spares the remote host a duplicate round trip.
+ */
+const regionAccessInflight = new Map<MinimaxRegion, Promise<boolean>>()
 
 /** Forget a cached reachability verdict. */
 export function invalidateMinimaxRegionAccess(region?: MinimaxRegion): void {
@@ -368,6 +376,20 @@ export async function minimaxRegionBlocked(
   if (options.fresh !== true && cached !== undefined && Date.now() - cached.at < MINIMAX_REGION_ACCESS_TTL_MS) {
     return cached.blocked
   }
+  let pending = regionAccessInflight.get(region)
+  if (pending === undefined) {
+    pending = probeRegionAccess(region, options)
+      .finally(() => { regionAccessInflight.delete(region) })
+    regionAccessInflight.set(region, pending)
+  }
+  return await pending
+}
+
+async function probeRegionAccess(
+  region: MinimaxRegion,
+  options: { fetchImpl?: typeof fetch; signal?: AbortSignal },
+): Promise<boolean> {
+  const cached = regionAccessCache.get(region)
   const fetchImpl = options.fetchImpl ?? fetch
   const timeout = AbortSignal.timeout(MINIMAX_REGION_PROBE_TIMEOUT_MS)
   const signal = options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])

@@ -14,6 +14,7 @@ import {
   MinimaxMcpBridge, MinimaxMcpServer, hostMcpToolName, isHostMcpTool,
   minimaxAuthStatePath, minimaxDataDir, minimaxModelsFromConfigOptions, minimaxSignedIn,
   minimaxUsageFromParts, minimaxUsage, minimaxHostBelongsToOtherRegion,
+  minimaxRegionBlocked, minimaxRegionBlockedCached,
   invalidateMinimaxRegionAccess, invalidateMinimaxUsage,
 } from '../src/minimax.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../src/minimax-cli.ts'
@@ -293,6 +294,48 @@ describe('MiniMax region availability', () => {
     expect(minimaxHostBelongsToOtherRegion('cn', 'https://platform.minimax.io/')).toBe(true)
     expect(minimaxHostBelongsToOtherRegion('cn', 'https://www.minimaxi.com/')).toBe(false)
     expect(minimaxHostBelongsToOtherRegion('global', 'not a url')).toBe(false)
+  })
+
+  it('keeps a verdict until a fresh probe asks again', async () => {
+    invalidateMinimaxRegionAccess()
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      return calls === 1
+        ? new Response(null, { status: 307, headers: { location: 'https://agent.minimaxi.com/' } })
+        : new Response(null, { status: 200 })
+    }) as unknown as typeof fetch
+
+    expect(await minimaxRegionBlocked('global', { fetchImpl })).toBe(true)
+    expect(minimaxRegionBlockedCached('global')).toBe(true)
+    // The cached verdict is what a normal read sees; no second request.
+    expect(await minimaxRegionBlocked('global', { fetchImpl })).toBe(true)
+    expect(calls).toBe(1)
+    // A switch must re-probe, because the network may have changed.
+    expect(await minimaxRegionBlocked('global', { fetchImpl, fresh: true })).toBe(false)
+    expect(calls).toBe(2)
+    expect(minimaxRegionBlockedCached('global')).toBe(false)
+    invalidateMinimaxRegionAccess()
+  })
+
+  it('shares one probe between concurrent readers', async () => {
+    invalidateMinimaxRegionAccess()
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      await new Promise(resolve => setTimeout(resolve, 5))
+      return new Response(null, { status: 307, headers: { location: 'https://agent.minimaxi.com/' } })
+    }) as unknown as typeof fetch
+
+    // The quota read and the catalog read start together on a region switch.
+    const [first, second] = await Promise.all([
+      minimaxRegionBlocked('global', { fetchImpl, fresh: true }),
+      minimaxRegionBlocked('global', { fetchImpl }),
+    ])
+    expect(first).toBe(true)
+    expect(second).toBe(true)
+    expect(calls).toBe(1)
+    invalidateMinimaxRegionAccess()
   })
 
   it('reports a blocked region without inventing account data', async () => {

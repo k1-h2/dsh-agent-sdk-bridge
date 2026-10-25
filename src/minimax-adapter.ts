@@ -151,8 +151,16 @@ export class MinimaxAdapter extends LlmAdapter {
     return this.catalog.error(region)
   }
 
+  /**
+   * Drop the cached catalog and the region verdict behind it.
+   *
+   * The page calls this with `fresh=1` on a region switch, which is exactly
+   * when the network may have changed; keeping a 30-second "blocked" verdict
+   * would hide the catalog the switch was meant to reveal.
+   */
   invalidateCatalog(region?: MinimaxRegion): void {
     this.catalog.invalidate(region)
+    invalidateMinimaxRegionAccess(region)
   }
 
   /** Login status, installer state and (when signed in) the account's quota. */
@@ -180,9 +188,10 @@ export class MinimaxAdapter extends LlmAdapter {
     }
   }
 
-  /** Drop cached quota readings (after a login, logout or CLI change). */
+  /** Drop cached quota readings and the region verdict (login, logout, CLI). */
   invalidateUsage(region?: MinimaxRegion): void {
     invalidateMinimaxUsage(region)
+    invalidateMinimaxRegionAccess(region)
   }
 
   /** Login progress for one region; the page polls this. */

@@ -1164,6 +1164,16 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(undefined)
       const lastRunning = useRef(false)
+      /**
+       * The region the account reading was last requested for.
+       *
+       * A switch must re-probe the network instead of serving the previous
+       * region's cached verdict: the user changes region precisely because the
+       * machine was (or is now) on the other side of the border, and the old
+       * reading can be up to a minute stale. The first mount keeps the
+       * snapshot-first behaviour and reads from cache.
+       */
+      const lastUsageRegion = useRef(configuredRegion)
       const signingIn = auth?.running === true
       const signedIn = auth?.signedIn === true
       const runningSetup = setup?.running === true
@@ -1225,8 +1235,12 @@ window.__ModuleLoader__.load({
         regionRef.current = region
         applySnapshot(region)
         setError(undefined)
+        const switched = lastUsageRegion.current !== region
+        lastUsageRegion.current = region
         void pollAuth(region)
-        void loadUsage(false, region)
+        // `fresh` drops both the 60s account cache and the 30s region-access
+        // verdict, so a switch always re-probes the network before deciding.
+        void loadUsage(switched, region)
         void pollSetup()
       }, [region, refreshSignal, applySnapshot, loadUsage, pollAuth, pollSetup])
 
@@ -1656,15 +1670,34 @@ window.__ModuleLoader__.load({
       const lastLoaded = useRef(undefined)
       const refresh = useCallback(() => { void loadRef.current() }, [])
 
-      /** A blocked region has no readable catalog; drop the remembered table. */
+      /** The last region verdict, so recovering from a block reloads the list. */
+      const blockedRegion = useRef(undefined)
+
+      /**
+       * Keep the model list in step with the region verdict.
+       *
+       * A blocked region has no readable catalog, so its remembered table is
+       * dropped. The reverse matters too: a manual refresh re-probes the
+       * network, and if the verdict flips back the list must be read again
+       * without asking the user to switch region and back.
+       */
       const handleMinimaxUsage = useCallback(payload => {
-        if (brand.id !== 'minimax' || payload?.regionBlocked !== true) return
+        if (brand.id !== 'minimax') return
+        const wasBlocked = blockedRegion.current === region
+        if (payload?.regionBlocked !== true) {
+          if (wasBlocked) {
+            blockedRegion.current = undefined
+            refresh()
+          }
+          return
+        }
+        blockedRegion.current = region
         const notice = typeof payload.error === 'string' ? payload.error : t('minimaxIpBlocked')
         setModels([])
         setCatalogNotice(notice)
         setError(undefined)
         writeCache(brand.id, kindRef.current, { rows: [], notice, signedIn: true, at: Date.now() })
-      }, [brand.id, t])
+      }, [brand.id, region, refresh, t])
 
       /**
        * On a region switch, paint that region's remembered table first and
