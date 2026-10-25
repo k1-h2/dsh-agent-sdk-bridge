@@ -256,16 +256,29 @@ describe('settings API brand routing', () => {
     expect(ended.body()).toMatchObject({ brand: 'minimax', signedIn: false })
   })
 
-  it('exposes the MiniMax CLI installer and rejects an unknown mode', async () => {
+  it('routes the MiniMax installer from the POST body, not the query string', async () => {
     const status = response()
     await handleApi(request(`${API_PREFIX}/setup?brand=minimax`), status.res, ADAPTERS)
     expect(status.status()).toBe(200)
     expect(typeof status.body().installed).toBe('boolean')
 
-    // Validated before the installer is spawned, so no npm process runs here.
+    // The page posts `/setup` without a query brand, so the body alone must
+    // reach the MiniMax branch. An invalid mode is rejected there — before the
+    // installer spawns — and the message proves which branch answered.
     const badMode = response()
     await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'minimax', mode: 'configure' }), badMode.res, ADAPTERS)
     expect(badMode.status()).toBe(400)
+    expect(badMode.body().error).toBe('mode 只接受 install 或 uninstall')
+
+    // Qoder still answers with its own mode vocabulary for the same request.
+    const qoderMode = response()
+    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'bogus' }), qoderMode.res, ADAPTERS)
+    expect(qoderMode.status()).toBe(400)
+    expect(qoderMode.body().error).toBe('mode 只接受 configure、login 或 uninstall')
+
+    const noBrand = response()
+    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { mode: 'install' }), noBrand.res, ADAPTERS)
+    expect(noBrand.status()).toBe(400)
   })
 
   it('refuses a brand it does not serve instead of defaulting to CN', async () => {

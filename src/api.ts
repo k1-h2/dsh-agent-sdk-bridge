@@ -330,46 +330,15 @@ export async function handleApi(
     }
 
     if (path === '/setup') {
-      if (codebuddy !== undefined) {
-        send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
-        return
-      }
-      if (minimax !== undefined) {
-        if (method === 'GET') {
-          send(res, 200, readMinimaxSetupStatus())
-          return
-        }
-        if (method === 'POST') {
-          let parsed: { brand?: unknown, mode?: unknown }
-          try {
-            parsed = ((await readJson(req)) ?? {}) as { brand?: unknown, mode?: unknown }
-          } catch (error) {
-            send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
-            return
-          }
-          if (brandFrom(parsed.brand) !== 'minimax') {
-            send(res, 400, { error: '该 brand 没有 CLI 安装流程' })
-            return
-          }
-          if (!isMinimaxSetupMode(parsed.mode)) {
-            send(res, 400, { error: 'mode 只接受 install 或 uninstall' })
-            return
-          }
-          const result = startMinimaxSetup(parsed.mode, code => {
-            if (code !== 0) return
-            minimax.invalidateCatalog()
-          })
-          if (!result.started) {
-            const status = result.reason === 'busy' ? 409 : 501
-            send(res, status, { error: result.error })
-            return
-          }
-          send(res, 200, readMinimaxSetupStatus())
-          return
-        }
-      }
-      const qoder = adapter as QoderAdapter
       if (method === 'GET') {
+        if (codebuddy !== undefined) {
+          send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
+          return
+        }
+        if (minimax !== undefined) {
+          send(res, 200, readMinimaxSetupStatus())
+          return
+        }
         send(res, 200, readSetupStatus(queryBrand as 'cn' | 'global'))
         return
       }
@@ -381,15 +350,39 @@ export async function handleApi(
           send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
           return
         }
+        // A POST selects its provider in the body; the query string may name
+        // none at all, which is why this cannot reuse the GET's brand.
         const postBrand = brandFrom(parsed.brand)
-        if (postBrand === undefined || postBrand === 'codebuddy' || postBrand === 'minimax') {
-          send(res, 400, { error: '该 brand 没有 CLI 安装脚本' })
+        if (postBrand === undefined) {
+          send(res, 400, { error: 'brand 只接受 cn、global、codebuddy 或 minimax' })
+          return
+        }
+        if (postBrand === 'codebuddy') {
+          send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
+          return
+        }
+        if (postBrand === 'minimax') {
+          if (!isMinimaxSetupMode(parsed.mode)) {
+            send(res, 400, { error: 'mode 只接受 install 或 uninstall' })
+            return
+          }
+          const mm = adapters.minimax as MinimaxAdapter
+          const result = startMinimaxSetup(parsed.mode, code => {
+            if (code !== 0) return
+            mm.invalidateCatalog()
+          })
+          if (!result.started) {
+            send(res, result.reason === 'busy' ? 409 : 501, { error: result.error })
+            return
+          }
+          send(res, 200, readMinimaxSetupStatus())
           return
         }
         if (!isSetupMode(parsed.mode)) {
           send(res, 400, { error: 'mode 只接受 configure、login 或 uninstall' })
           return
         }
+        const qoder = adapters[postBrand] as QoderAdapter
         const result = startSetup(postBrand, parsed.mode, code => {
           if (code === 0) {
             qoder.invalidateCatalog()
@@ -404,6 +397,8 @@ export async function handleApi(
         send(res, 200, readSetupStatus(postBrand))
         return
       }
+      send(res, 405, { error: '不支持的写入路径' })
+      return
     }
 
     send(res, method === 'GET' ? 404 : 405, { error: method === 'GET' ? 'not found' : '不支持的写入路径' })
