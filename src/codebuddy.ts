@@ -824,6 +824,38 @@ interface PendingTool {
 /** Per-turn output accounting shared with the Qoder session. */
 type TurnUsage = { input_tokens: number, output_tokens: number, cache_read_input_tokens?: number | null, cache_creation_input_tokens?: number | null }
 
+/** A token count as a non-negative whole number; anything unusable becomes 0. */
+function countOf(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : 0
+}
+
+/** Whether one usage frame actually measured a prompt. */
+function measuredPrompt(usage: TurnUsage | undefined): usage is TurnUsage {
+  return usage !== undefined
+    && (countOf(usage.input_tokens) > 0
+      || countOf(usage.cache_read_input_tokens) > 0
+      || countOf(usage.cache_creation_input_tokens) > 0)
+}
+
+/**
+ * Fold one `message_delta` usage into the turn's reading.
+ *
+ * The delta is cumulative for its own message and carries the final output
+ * count. Not every transport repeats the prompt fields on it, so the last
+ * measured values are kept rather than letting a later frame erase them.
+ */
+function mergeTurnUsage(previous: TurnUsage | undefined, next: TurnUsage): TurnUsage {
+  const output = typeof next.output_tokens === 'number' && Number.isFinite(next.output_tokens)
+    ? next.output_tokens
+    : previous?.output_tokens ?? 0
+  return {
+    input_tokens: countOf(next.input_tokens) > 0 ? next.input_tokens : previous?.input_tokens ?? 0,
+    output_tokens: output,
+    cache_read_input_tokens: next.cache_read_input_tokens ?? previous?.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: next.cache_creation_input_tokens ?? previous?.cache_creation_input_tokens ?? 0,
+  }
+}
+
 /**
  * One warm CodeBuddy session for a host session id.
  *
@@ -850,7 +882,16 @@ export class CodeBuddySession {
   private callCounter = 0
   private readonly callNonce = randomUUID().slice(0, 8)
   private lastUsage: TurnUsage | undefined
-  private resultUsage: TurnUsage | undefined
+  /**
+   * The last prompt-side buckets a request actually measured.
+   *
+   * Kept across turns: a turn can end without a usable usage frame (aborted
+   * before the first delta, or a transport that only sends the cumulative
+   * result). Reusing the last real reading keeps the host's context pressure
+   * at the provider's actual prompt instead of collapsing it to the CLI's
+   * startup overhead.
+   */
+  private lastPromptUsage: { inputTokens: number, cacheReadTokens: number, cacheWriteTokens: number } | undefined
   /**
    * Ids of assistant messages whose streaming events this session consumed.
    *
@@ -1066,7 +1107,10 @@ export class CodeBuddySession {
       const event = message.event
       if (event.type === 'message_start') {
         const usage = (event.message as { usage?: TurnUsage }).usage
-        if (usage !== undefined) this.lastUsage = usage
+        // CodeBuddy reports all-zero counts here; the real prompt arrives on
+        // message_delta. Only a frame that measured something may replace the
+        // turn's reading, or an interrupted turn would report a zero prompt.
+        if (measuredPrompt(usage)) this.lastUsage = usage
         // Remember which message this stream belongs to. A tool round ends the
         // host turn at `message_stop` (waiting for `result` would deadlock:
         // the CLI only finishes after the host returns the tool result), so
@@ -1138,7 +1182,7 @@ export class CodeBuddySession {
       }
       if (event.type === 'message_delta') {
         const usage = (event as { usage?: TurnUsage }).usage
-        if (usage !== undefined) this.lastUsage = usage
+        if (usage !== undefined) this.lastUsage = mergeTurnUsage(this.lastUsage, usage)
         return
       }
       if (event.type === 'message_stop') {
@@ -1172,7 +1216,9 @@ export class CodeBuddySession {
       return
     }
     if (message.type === 'result') {
-      this.resultUsage = message.usage as TurnUsage
+      // `result.usage` is cumulative for the whole inner session (verified:
+      // the inputs of every request so far are summed), so it is never the
+      // current prompt. The per-request reading is the last message_delta's.
       if (this.abortPending) {
         this.endTurn({ kind: 'aborted', failure: { message: 'CodeBuddy turn aborted by host', code: 'ABORTED' } })
         return
@@ -1214,7 +1260,6 @@ export class CodeBuddySession {
     this.inputChars = 0
     this.output.reset()
     this.lastUsage = undefined
-    this.resultUsage = undefined
     this.turnEndKind = undefined
   }
 
@@ -1227,29 +1272,57 @@ export class CodeBuddySession {
   }
 
   private usage(): TokenUsage {
-    const metered = this.lastUsage ?? this.resultUsage
-    if (metered !== undefined) {
-      const cacheRead = metered.cache_read_input_tokens ?? 0
-      const cacheWrite = metered.cache_creation_input_tokens ?? 0
-      const input = Math.max(0, metered.input_tokens - cacheRead - cacheWrite)
-      const output = this.output.usage()
+    const metered = this.lastUsage
+    const local = this.output.usage()
+    // The provider counts output exactly. The character estimate is only for
+    // turns whose stream carried no usage at all (older transports, aborts).
+    const measuredOutput = countOf(metered?.output_tokens)
+    const outputTokens = measuredOutput > 0 ? measuredOutput : Math.max(1, Math.ceil(local.outputTokens))
+    const reasoning = local.reasoningTokens === undefined
+      ? {}
+      : { reasoningTokens: Math.min(outputTokens, Math.max(1, Math.ceil(local.reasoningTokens))) }
+
+    if (metered !== undefined && countOf(metered.input_tokens) > 0) {
+      const cacheRead = countOf(metered.cache_read_input_tokens)
+      const cacheWrite = countOf(metered.cache_creation_input_tokens)
+      // `input_tokens` includes cache traffic: CodeBuddy's own modelUsage
+      // reports inputTokens = input_tokens - cache_read (verified live), so
+      // the harness's disjoint buckets are the remainder plus the cache ones.
+      const inputTokens = Math.max(0, countOf(metered.input_tokens) - cacheRead - cacheWrite)
+      this.lastPromptUsage = { inputTokens, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite }
       return {
-        inputTokens: input,
-        outputTokens: output.outputTokens,
-        ...output.reasoningTokens === undefined ? {} : { reasoningTokens: output.reasoningTokens },
+        inputTokens,
+        outputTokens,
+        ...reasoning,
         cacheReadTokens: cacheRead,
         cacheWriteTokens: cacheWrite,
-        totalTokens: input + cacheRead + cacheWrite + output.outputTokens,
+        totalTokens: inputTokens + cacheRead + cacheWrite + outputTokens,
       }
     }
-    const input = Math.max(1, estimateTextTokens(this.inputChars, 0))
-    const output = this.output.usage()
+
+    if (this.lastPromptUsage !== undefined) {
+      // No usable usage frame this turn. Reuse the provider's last measured
+      // prompt: reporting zero would collapse the context ring, and `result`
+      // is session-cumulative, so it can never stand in for one request.
+      const prompt = this.lastPromptUsage
+      return {
+        inputTokens: prompt.inputTokens,
+        outputTokens,
+        ...reasoning,
+        cacheReadTokens: prompt.cacheReadTokens,
+        cacheWriteTokens: prompt.cacheWriteTokens,
+        totalTokens: prompt.inputTokens + prompt.cacheReadTokens + prompt.cacheWriteTokens + outputTokens,
+      }
+    }
+
+    const inputTokens = Math.max(1, Math.ceil(estimateTextTokens(this.inputChars, 0)))
     return {
-      inputTokens: input,
-      outputTokens: Math.max(1, output.outputTokens),
+      inputTokens,
+      outputTokens,
+      ...reasoning,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
-      totalTokens: input + Math.max(1, output.outputTokens),
+      totalTokens: inputTokens + outputTokens,
     }
   }
 

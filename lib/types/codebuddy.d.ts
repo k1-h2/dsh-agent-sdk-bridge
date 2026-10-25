@@ -208,7 +208,16 @@ export declare class CodeBuddySession {
     private callCounter;
     private readonly callNonce;
     private lastUsage;
-    private resultUsage;
+    /**
+     * The last prompt-side buckets a request actually measured.
+     *
+     * Kept across turns: a turn can end without a usable usage frame (aborted
+     * before the first delta, or a transport that only sends the cumulative
+     * result). Reusing the last real reading keeps the host's context pressure
+     * at the provider's actual prompt instead of collapsing it to the CLI's
+     * startup overhead.
+     */
+    private lastPromptUsage;
     /**
      * Ids of assistant messages whose streaming events this session consumed.
      *
