@@ -101,8 +101,7 @@ window.__ModuleLoader__.load({
       usagePlan: '套餐',
       usageUsed: '已用',
       usageRemaining: '剩余',
-      usageOf: '/',
-      usageCredits: 'credits',
+      usageCredits: '积分',
       usagePlanQuota: '套餐额度',
       usageAddOn: '加量包',
       usageOrgPackage: '组织资源包',
@@ -291,7 +290,6 @@ window.__ModuleLoader__.load({
       usagePlan: 'Plan',
       usageUsed: 'Used',
       usageRemaining: 'Remaining',
-      usageOf: '/',
       usageCredits: 'credits',
       usagePlanQuota: 'Plan quota',
       usageAddOn: 'Add-on package',
@@ -562,10 +560,18 @@ window.__ModuleLoader__.load({
       log: { margin: '0', maxHeight: '240px', overflowY: 'auto', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', background: 'var(--dsw-alias-bg-base, rgba(128,128,128,0.05))', fontFamily: 'ui-monospace, monospace', fontSize: '0.76em', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
       usageCard: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px 16px', borderRadius: '10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', background: 'var(--dsw-alias-bg-base, rgba(128,128,128,0.03))' },
       usageHead: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' },
-      usagePct: { marginLeft: 'auto', fontSize: '0.9em', fontWeight: 600 },
       progressOuter: { height: '8px', borderRadius: '999px', background: 'var(--dsw-alias-border-l2, rgba(128,128,128,0.22))', overflow: 'hidden' },
       progressInner: { height: '100%', borderRadius: '999px', background: 'var(--dsw-alias-brand-primary, #4c6ef5)', transition: 'width .25s ease' },
       progressDanger: { background: 'var(--dsw-alias-label-danger, #e03131)' },
+      creditStack: { display: 'flex', flexDirection: 'column', gap: '14px' },
+      creditMeter: { display: 'flex', flexDirection: 'column', gap: '6px' },
+      creditName: { fontSize: '0.8em', opacity: 0.55 },
+      creditRow: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', fontSize: '0.9em' },
+      creditLabel: { opacity: 0.62, minWidth: '56px' },
+      creditAmount: { fontWeight: 600, fontSize: '1.04em', fontVariantNumeric: 'tabular-nums' },
+      creditPct: { marginLeft: 'auto', opacity: 0.62, fontVariantNumeric: 'tabular-nums' },
+      creditBar: { height: '6px', borderRadius: '999px', background: 'var(--dsw-alias-border-l2, rgba(128,128,128,0.22))', overflow: 'hidden' },
+      creditBarFill: { height: '100%', borderRadius: '999px', background: 'var(--dsw-alias-brand-primary, #4c6ef5)', transition: 'width .25s ease' },
       usageLine: { display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', fontSize: '0.86em' },
       usageLabel: { opacity: 0.62, minWidth: '72px' },
       usageValue: { fontWeight: 500 },
@@ -765,32 +771,80 @@ window.__ModuleLoader__.load({
       return t('minimaxTokenRemainingHours').replace('{n}', String(Math.floor(minutes / 60)))
     }
 
+    /** A finite number, or undefined for anything else. */
+    function countOf(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+    }
+
     /**
-     * One quota bucket as a line: label, `remaining / total`, percentage.
+     * The used/total reading one credit bucket is rendered from.
      *
-     * Both editions quote the same shape (`userQuota`, `addOnQuota`,
-     * `orgResourcePackage`), so the three render through one function; a bucket
-     * the account does not have is simply not passed in.
+     * Upstream quotes a bucket either as `used` + `total` or as `remaining` +
+     * `total` (Qoder's organization package calls the total `cap`). Both shapes
+     * are normalized here, and the percentage is computed from the same numbers
+     * the row prints: an upstream percentage that disagreed with them would
+     * make the bar contradict its own label.
      */
-    function QuotaLine({ t, label, bucket, fallbackUnit }) {
-      if (bucket === undefined || bucket === null) return null
-      const total = bucket.total ?? bucket.cap
-      const remaining = bucket.remaining
-      const used = bucket.used
-      // A plan bucket the account does not have is reported as all zeros; an
-      // empty line describes nothing, so it is omitted rather than rendered.
-      if ((total === undefined || total === 0) && remaining === undefined) return null
-      const pct = percentOf(bucket.percentage)
-      const unit = bucket.unit ?? fallbackUnit ?? t('usageCredits')
-      const amount = remaining !== undefined && total !== undefined
-        ? `${t('usageRemaining')} ${creditsOf(remaining)} ${t('usageOf')} ${creditsOf(total)} ${unit}`
-        : total !== undefined
-          ? `${t('usageUsed')} ${creditsOf(used)} ${t('usageOf')} ${creditsOf(total)} ${unit}`
-          : '—'
-      return h('div', { style: css.usageLine },
-        h('span', { style: css.usageLabel }, label),
-        h('span', { style: css.usageValue }, amount),
-        pct === undefined ? null : h('span', { style: { opacity: 0.55 } }, `${Number(pct.toFixed(1))}%`),
+    function creditReading(bucket) {
+      if (bucket === null || typeof bucket !== 'object') return undefined
+      const total = countOf(bucket.total) ?? countOf(bucket.cap)
+      const remaining = countOf(bucket.remaining)
+      const used = countOf(bucket.used) ?? (total !== undefined && remaining !== undefined ? Math.max(0, total - remaining) : undefined)
+      const measured = total !== undefined && total > 0 && used !== undefined
+        ? Math.max(0, Math.min(100, (used / total) * 100))
+        : undefined
+      const pct = measured ?? percentOf(bucket.percentage)
+      // Some plans report only a percentage: it still fills the bar even though
+      // the row has no counts to print.
+      if (used === undefined && total === undefined && remaining === undefined) {
+        return pct === undefined ? undefined : { pct }
+      }
+      return { used, total, remaining, pct }
+    }
+
+    /** A bucket's unit, localized when upstream says the generic "credits". */
+    function creditUnit(t, bucket) {
+      const unit = typeof bucket?.unit === 'string' ? bucket.unit.trim() : ''
+      if (unit === '') return t('usageCredits')
+      return /^credits?$/i.test(unit) ? t('usageCredits') : unit
+    }
+
+    /**
+     * One credit bucket in the shape both account cards use: `used / total`
+     * with the percentage on the right and a bar underneath.
+     *
+     * A bucket the account does not have reports no numbers at all, so it
+     * renders nothing rather than an empty bar.
+     */
+    function CreditMeter({ t, label, bucket, danger }) {
+      const reading = creditReading(bucket)
+      if (reading === undefined) return null
+      const { used, total, remaining, pct } = reading
+      const amount = total !== undefined && used !== undefined
+        ? `${creditsOf(used)} / ${creditsOf(total)} ${creditUnit(t, bucket)}`
+        : total !== undefined && remaining !== undefined
+          ? `${creditsOf(remaining)} / ${creditsOf(total)} ${creditUnit(t, bucket)}`
+          : used !== undefined
+            ? `${creditsOf(used)} ${creditUnit(t, bucket)}`
+            : remaining !== undefined
+              ? `${creditsOf(remaining)} ${creditUnit(t, bucket)}`
+              : undefined
+      return h('div', { style: css.creditMeter },
+        label === undefined ? null : h('div', { style: css.creditName }, label),
+        h('div', { style: css.creditRow },
+          amount === undefined ? null : h('span', { style: css.creditLabel }, used !== undefined ? t('usageUsed') : t('usageRemaining')),
+          amount === undefined ? null : h('span', { style: css.creditAmount }, amount),
+          pct === undefined ? null : h('span', { style: css.creditPct }, `${Number(pct.toFixed(1))}%`),
+        ),
+        pct === undefined ? null : h('div', { style: css.creditBar },
+          h('div', {
+            style: {
+              ...css.creditBarFill,
+              width: `${pct}%`,
+              ...(danger === true || pct >= 100 ? css.progressDanger : {}),
+            },
+          }),
+        ),
       )
     }
 
@@ -838,7 +892,6 @@ window.__ModuleLoader__.load({
       const usage = snapshot?.usage
       const account = snapshot?.account
       const error = failure ?? (snapshot?.usage === undefined && snapshot?.error !== undefined ? String(snapshot.error) : undefined)
-      const pct = percentOf(usage?.totalUsagePercentage)
       const plan = account?.subscriptionType ?? usage?.userType ?? t('usageUnknownPlan')
       const identity = account?.name ?? account?.email ?? usage?.userId
       const exceeded = usage?.isQuotaExceeded === true
@@ -876,16 +929,31 @@ window.__ModuleLoader__.load({
           h('span', { style: css.usageLabel }, t('usagePlan')),
           h('span', { style: css.usageValue }, plan),
           exceeded ? h('span', { style: { ...css.err, fontWeight: 600 } }, t('usageExceeded')) : null,
-          pct === undefined ? null : h('span', { style: css.usagePct }, `${Number(pct.toFixed(1))}%`),
         ),
-        pct === undefined ? null : h('div', { style: css.progressOuter },
-          h('div', {
-            style: { ...css.progressInner, width: `${pct}%`, ...(exceeded ? css.progressDanger : {}) },
-          }),
+        h('div', { style: css.creditStack },
+          (() => {
+            const buckets = [
+              [t('usagePlanQuota'), usage?.userQuota],
+              [t('usageAddOn'), usage?.addOnQuota],
+              [t('usageOrgPackage'), usage?.orgResourcePackage],
+            ]
+            // Some accounts report only the overall percentage; a card with no
+            // meter at all would hide the one number the endpoint did give.
+            if (buckets.some(([, bucket]) => creditReading(bucket) !== undefined)) {
+              return buckets.map(([label, bucket]) => h(CreditMeter, {
+                key: label, t, label, bucket, danger: exceeded,
+              }))
+            }
+            return percentOf(usage?.totalUsagePercentage) === undefined
+              ? null
+              : h(CreditMeter, {
+                  t,
+                  label: t('usagePlanQuota'),
+                  bucket: { percentage: usage.totalUsagePercentage },
+                  danger: exceeded,
+                })
+          })(),
         ),
-        h(QuotaLine, { t, label: t('usagePlanQuota'), bucket: usage?.userQuota }),
-        h(QuotaLine, { t, label: t('usageAddOn'), bucket: usage?.addOnQuota }),
-        h(QuotaLine, { t, label: t('usageOrgPackage'), bucket: usage?.orgResourcePackage }),
         h('div', { style: css.usageFoot },
           expiry === undefined || neverExpires(expiry)
             ? h('span', null, `${t('usageExpires')} ${t('usageNever')}`)
@@ -1110,9 +1178,6 @@ window.__ModuleLoader__.load({
             .filter(part => typeof part === 'string' && part.length > 0)
             .join(' · ')
       const quota = account?.quota
-      const quotaPct = quota !== undefined && quota.total > 0
-        ? Math.max(0, Math.min(100, (quota.used / quota.total) * 100))
-        : undefined
       // Every package is kept: the collapsed row carries the count and the
       // combined total, so nothing disappears behind an invisible cut.
       const packages = Array.isArray(quota?.packages)
@@ -1167,15 +1232,12 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: css.err }, `${t('codebuddyQuotaFailed')}：${account.quotaError}`)
                   : h('div', { style: css.note }, t('codebuddyNoQuota')))
               : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-                  h('div', { style: css.usageLine },
-                    h('span', { style: css.usageLabel }, t('codebuddyQuotaTitle')),
-                    h('span', { style: css.usageValue },
-                      `${t('usageRemaining')} ${creditsOf(quota.remaining)} ${t('usageOf')} ${creditsOf(quota.total)} ${t('usageCredits')}`),
-                    quotaPct === undefined ? null : h('span', { style: css.usagePct }, `${quotaPct.toFixed(1)}%`),
-                  ),
-                  quotaPct === undefined ? null : h('div', { style: css.progressOuter },
-                    h('div', { style: { ...css.progressInner, width: `${quotaPct}%` } }),
-                  ),
+                  h(CreditMeter, {
+                    t,
+                    label: t('codebuddyQuotaTitle'),
+                    bucket: quota,
+                    danger: quota.total > 0 && quota.used >= quota.total,
+                  }),
                   packages.length === 0 ? null : (() => {
                     // Same rule as the other adapters: collapsed is one summary
                     // row (count, combined total, nearest expiry), expanded is
@@ -2513,7 +2575,7 @@ window.__ModuleLoader__.load({
     exports.name = 'dsh-agent-sdk-bridge'
     exports.__test = {
       windowLabel, priceSuffix, ADVANCED, BRANDS, zh, en,
-      SettingsPage, BundleSettings, UsageCard, CodeBuddyCard, QuotaLine, creditsOf, neverExpires,
+      SettingsPage, BundleSettings, UsageCard, CodeBuddyCard, CreditMeter, creditReading, creditUnit, creditsOf, neverExpires,
       dateLabel, tokenExpiryText, packageSummary,
       readCache, writeCache,
     }

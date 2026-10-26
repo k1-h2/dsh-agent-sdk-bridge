@@ -22,11 +22,20 @@ interface PackageSummary {
   nearest?: number
 }
 
+interface CreditReading {
+  used?: number
+  total?: number
+  remaining?: number
+  pct?: number
+}
+
 interface ClientTestFace {
   zh: Record<string, string>
   en: Record<string, string>
   tokenExpiryText: (t: (key: string) => string, ms: unknown, now?: number) => string
   packageSummary: (packages: unknown) => PackageSummary
+  creditReading: (bucket: unknown) => CreditReading | undefined
+  creditUnit: (t: (key: string) => string, bucket: unknown) => string
 }
 
 /** Evaluate the bundle the way the shell's loader does and take its test face. */
@@ -105,6 +114,46 @@ describe('client copy dictionaries', () => {
       const empty = Object.entries(table).filter(([, value]) => value === '')
       expect(empty, name).toEqual([])
     }
+  })
+})
+
+describe('credit meter reading', () => {
+  it('uses the printed numbers for the percentage, not an upstream rival', () => {
+    const reading = client.creditReading({ used: 133.57, total: 1850, percentage: 1 })
+    expect(reading?.used).toBe(133.57)
+    expect(reading?.total).toBe(1850)
+    expect(reading?.pct).toBeCloseTo(7.22, 2)
+  })
+
+  it('derives used from remaining when the bucket omits it', () => {
+    const reading = client.creditReading({ total: 1000, remaining: 250 })
+    expect(reading?.used).toBe(750)
+    expect(reading?.pct).toBe(75)
+  })
+
+  it('accepts the organization package cap field', () => {
+    const reading = client.creditReading({ cap: 500, remaining: 100 })
+    expect(reading?.total).toBe(500)
+    expect(reading?.used).toBe(400)
+    expect(reading?.pct).toBe(80)
+  })
+
+  it('clamps an overrun to a full bar', () => {
+    expect(client.creditReading({ used: 120, total: 100 })?.pct).toBe(100)
+  })
+
+  it('renders nothing for a bucket with no numbers at all', () => {
+    expect(client.creditReading(undefined)).toBeUndefined()
+    expect(client.creditReading({})).toBeUndefined()
+    // A percentage-only plan still has a bar worth drawing.
+    expect(client.creditReading({ percentage: 42 })).toEqual({ pct: 42 })
+  })
+
+  it('localizes the generic English credit unit', () => {
+    const t = (key: string): string => client.zh[key] ?? key
+    expect(client.creditUnit(t, { unit: 'credits' })).toBe('积分')
+    expect(client.creditUnit(t, {})).toBe('积分')
+    expect(client.creditUnit(t, { unit: 'GB' })).toBe('GB')
   })
 })
 
