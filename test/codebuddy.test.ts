@@ -64,6 +64,22 @@ describe('CodeBuddy model mapping', () => {
     expect(model.contextWindows).toEqual([])
     expect(model.defaultContextWindow).toBe(1_000_000)
   })
+
+  it('reports the budget the session runs at, not the physical limit', () => {
+    // The global catalog's `deepseek-v4.1-flash`: supportedLengths [300K, 1M]
+    // with a 300K defaultLength. The CLI resolves a session budget of 300K —
+    // its compaction trigger is 276000 and the gateway refuses anything past
+    // it — while `maxInputTokens` is 1M. Reporting the physical limit left the
+    // host showing (and feeding) a history the session could never hold.
+    const model = toCodeBuddyModel({
+      id: 'deepseek-v4.1-flash',
+      maxInputTokens: 1_000_000,
+      maxAllowedSize: 1_000_000,
+      contextWindow: { supportedLengths: [300_000, 1_000_000], defaultLength: 300_000 },
+    })
+    expect(model.defaultContextWindow).toBe(300_000)
+    expect(model.contextWindows).toEqual([300_000, 1_000_000])
+  })
 })
 
 describe('CodeBuddy model ids', () => {

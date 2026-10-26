@@ -2206,6 +2206,9 @@ window.__ModuleLoader__.load({
         // CLI rejects every other value, so a dropdown here would be a control
         // that never reaches the upstream. Show the value instead.
         const fixedWindow = m.contextWindowSelectable === false || choices.length === 0
+        // The default window has its own entry; repeating it in the list reads
+        // as two identical choices. A stored override equal to it still shows.
+        const offered = choices.filter(n => n !== m.defaultContextWindow || n === m.override)
         return h('div', {
           key: m.id,
           style: { ...css.row, ...(index === 0 ? css.rowFirst : {}), ...(m.enabled ? {} : css.rowOff) },
@@ -2244,7 +2247,7 @@ window.__ModuleLoader__.load({
                 },
               },
                 h('option', { key: 'default', value: '' }, `${t('windowDefault')} · ${windowLabel(m.defaultContextWindow)}`),
-                choices.map(n => h('option', { key: String(n), value: String(n) }, windowLabel(n))),
+                offered.map(n => h('option', { key: String(n), value: String(n) }, windowLabel(n))),
               ),
         )
       })

@@ -17,6 +17,10 @@ const fake = vi.hoisted(() => ({
   registered: [] as string[],
   messages: [] as any[],
   sent: [] as any[],
+  /** `setConfig` payloads the session pushed to the CLI. */
+  configs: [] as any[],
+  /** When set, the CLI rejects the config the way `Allowed: <none>` models do. */
+  refuseConfig: false,
 }))
 
 vi.mock('../src/sdk.ts', () => ({
@@ -32,6 +36,10 @@ vi.mock('../src/sdk.ts', () => ({
       return {
         connect: async () => {},
         setModel: async () => {},
+        setConfig: async (config: any) => {
+          if (fake.refuseConfig) throw new Error('Invalid context_window value: Allowed: <none>')
+          fake.configs.push(config)
+        },
         send: async (message: any) => { fake.sent.push(message) },
         interrupt: async () => {},
         close: () => {},
@@ -163,5 +171,88 @@ describe('CodeBuddySession host tools', () => {
       expect(chunks.at(-1)?.type).toBe('finish')
       session.close()
     }
+  })
+
+  it('pushes the chosen context window into the inner session', async () => {
+    fake.created.length = 0
+    fake.configs.length = 0
+    fake.messages = [{ type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false }]
+
+    // The global catalog's default budget is 300K even though the model allows
+    // 1M. Without this call the session keeps compacting a history the host
+    // shows at 1M, and the conversation collapses to a summary mid-turn.
+    const session = new CodeBuddySession('s-window', 'deepseek-v4.1-flash')
+    session.configure('global', 'deepseek-v4.1-flash', { contextWindow: 1_000_000 })
+    await drain(session, 'hi')
+    expect(fake.configs).toEqual([{ contextWindow: 1_000_000 }])
+
+    // Sent once per model+window: repeating it on every request would be noise.
+    await drain(session, 'again')
+    expect(fake.configs).toHaveLength(1)
+
+    // The CLI validates the value against the current model, so a switch
+    // re-applies it.
+    session.configure('global', 'glm-5.3', { contextWindow: 1_000_000 })
+    await drain(session, 'switched')
+    expect(fake.configs).toHaveLength(2)
+    session.close()
+  })
+
+  it('leaves the session budget to the CLI when no window was chosen', async () => {
+    fake.configs.length = 0
+    fake.messages = [{ type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false }]
+
+    // No choice means the CLI's own default is already the window the host was
+    // told about, so there is nothing to push.
+    const session = new CodeBuddySession('s-no-window', 'hy3')
+    session.configure('global', 'hy3')
+    await drain(session, 'hi')
+    expect(fake.configs).toEqual([])
+    session.close()
+  })
+
+  it('re-sends the model default when the page goes back to default', async () => {
+    fake.configs.length = 0
+    fake.messages = [{ type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false }]
+
+    // The override lives for the life of the CLI process. The CLI rejects a
+    // null clear ("contextWindow must be a positive safe integer"), so the
+    // adapter sends the model's own default instead of dropping the choice:
+    // otherwise the session keeps 1M while the host divides by 300K.
+    const session = new CodeBuddySession('s-default', 'deepseek-v4.1-flash')
+    session.configure('global', 'deepseek-v4.1-flash', { contextWindow: 1_000_000 })
+    await drain(session, 'hi')
+    expect(fake.configs).toEqual([{ contextWindow: 1_000_000 }])
+
+    session.configure('global', 'deepseek-v4.1-flash', { contextWindow: 300_000 })
+    await drain(session, 'hi again')
+    expect(fake.configs).toEqual([{ contextWindow: 1_000_000 }, { contextWindow: 300_000 }])
+
+    // Repeating the same budget is not re-sent.
+    await drain(session, 'hi once more')
+    expect(fake.configs).toHaveLength(2)
+    session.close()
+  })
+
+  it('keeps the turn alive when the model refuses the window', async () => {
+    fake.configs.length = 0
+    fake.refuseConfig = true
+    fake.messages = [
+      { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'text' } } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } } },
+      { type: 'stream_event', event: { type: 'content_block_stop' } },
+      { type: 'result', usage: { input_tokens: 1, output_tokens: 1 }, is_error: false },
+    ]
+
+    const session = new CodeBuddySession('s-refused', 'hy3')
+    session.configure('global', 'hy3', { contextWindow: 192_000 })
+    const chunks = await drain(session, 'hi')
+    fake.refuseConfig = false
+
+    // The rejection is not fatal: a model with one fixed window keeps its
+    // default and the turn still runs.
+    expect(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join('')).toBe('ok')
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    session.close()
   })
 })

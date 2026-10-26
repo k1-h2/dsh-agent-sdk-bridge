@@ -140,7 +140,16 @@ describe('settings API brand routing', () => {
     await handleApi(request(`${API_PREFIX}/models?brand=codebuddy`), models.res, ADAPTERS)
     expect(models.status()).toBe(200)
     expect(models.body().signedIn).toBe(true)
-    expect(models.body().models[0]).toMatchObject({ id: 'cb-model', vision: true, reasoning: true })
+    expect(models.body().models[0]).toMatchObject({
+      id: 'cb-model', vision: true, reasoning: true,
+      // The provider's own default budget is what the session runs at; the
+      // physical limit is not, and reporting it made the host divide by a
+      // window the CLI never used.
+      contextWindow: 200_000,
+      defaultContextWindow: 200_000,
+      contextWindows: [200_000, 1_000_000],
+      contextWindowSelectable: true,
+    })
 
     const account = response()
     await handleApi(request(`${API_PREFIX}/usage?brand=codebuddy`), account.res, ADAPTERS)

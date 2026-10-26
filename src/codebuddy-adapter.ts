@@ -366,7 +366,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
       yield* this.firstTurn(session, options, region, model, effort)
       return
     }
-    session.configure(region, model, { effort, system: options.system, cwd: this.cwdOf(options) })
+    session.configure(region, model, {
+      effort, system: options.system, cwd: this.cwdOf(options), ...await this.windowOption(model),
+    })
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
@@ -384,7 +386,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
     model: string,
     effort: string | undefined,
   ): AsyncGenerator<StreamChunk> {
-    session.configure(region, model, { effort, system: options.system, cwd: this.cwdOf(options) })
+    session.configure(region, model, {
+      effort, system: options.system, cwd: this.cwdOf(options), ...await this.windowOption(model),
+    })
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
@@ -395,6 +399,28 @@ export class CodeBuddyAdapter extends LlmAdapter {
       options.signal,
     )
     yield* session.stream(options, feed)
+  }
+
+  /**
+   * The context window the host and the inner session must agree on.
+   *
+   * Only a model that offers selectable budgets is configured: one fixed
+   * window rejects every value, so the CLI's own default already matches what
+   * the host shows. For a model with choices the adapter sends the picked
+   * value; returning to "default" sends the model's own default budget, since
+   * the CLI rejects a null clear (`contextWindow must be a positive safe
+   * integer`). The override lives for the life of the CLI process, so the
+   * default has to be sent explicitly to drop a previous choice.
+   */
+  private async windowOption(model: string): Promise<{ contextWindow?: number }> {
+    const live = (await this.catalog.models(this.region)).find(entry => entry.id === model)
+    if (live === undefined || live.contextWindows.length === 0) return {}
+    const chosen = this.options.modelContextWindows?.(this.region)[model]
+    return {
+      contextWindow: chosen !== undefined && live.contextWindows.includes(chosen)
+        ? chosen
+        : live.defaultContextWindow,
+    }
   }
 
   private cwdOf(options: GenerateOptions): string | undefined {

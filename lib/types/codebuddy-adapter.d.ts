@@ -108,6 +108,18 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
     private dispatch;
     private firstTurn;
+    /**
+     * The context window the host and the inner session must agree on.
+     *
+     * Only a model that offers selectable budgets is configured: one fixed
+     * window rejects every value, so the CLI's own default already matches what
+     * the host shows. For a model with choices the adapter sends the picked
+     * value; returning to "default" sends the model's own default budget, since
+     * the CLI rejects a null clear (`contextWindow must be a positive safe
+     * integer`). The override lives for the life of the CLI process, so the
+     * default has to be sent explicitly to drop a previous choice.
+     */
+    private windowOption;
     private cwdOf;
     close(): void;
 }

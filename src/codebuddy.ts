@@ -933,6 +933,10 @@ export class CodeBuddySession {
   private effort: string | undefined
   private systemPrompt: string | undefined
   private cwd: string | undefined
+  /** Context budget the host shows for this session, when a model offers one. */
+  private contextWindow: number | undefined
+  /** Budget already pushed to the CLI, keyed by model and value. */
+  private appliedWindow: string | undefined
   /** Host messages already fed to the inner session, for continuation planning. */
   fedMessages: readonly import('@deepseek-ai/dsh-llm').RequestMessage[] | undefined
   /** Host system prompt last applied; informational for the adapter. */
@@ -949,12 +953,47 @@ export class CodeBuddySession {
   }
 
   /** Point the session at a region, model and optional system prompt. */
-  configure(region: CodeBuddyRegion, model: string, options: { effort?: string, system?: string, cwd?: string } = {}): void {
+  configure(
+    region: CodeBuddyRegion,
+    model: string,
+    options: { effort?: string, system?: string, cwd?: string, contextWindow?: number } = {},
+  ): void {
     this.region = region
     this.model = model
     this.effort = options.effort
     this.systemPrompt = options.system
     if (options.cwd !== undefined) this.cwd = options.cwd
+    if (options.contextWindow !== undefined) this.contextWindow = options.contextWindow
+  }
+
+  /**
+   * Push the host-visible context window into the inner session.
+   *
+   * The CLI resolves its own budget (`override > model default > physical
+   * limit`) and both its compaction trigger and the upstream gateway enforce
+   * that budget. A global-catalog model such as `deepseek-v4.1-flash` declares
+   * `supportedLengths [300K, 1M]` with a 300K default, so a session left alone
+   * compacts (and the gateway rejects) anything past 276K — while the host,
+   * told 1M, keeps showing and feeding a larger history. Replaying that history
+   * then collapses to a summary. Applying the same number the host divides by
+   * keeps the two in step; models that expose no choice reject it and keep
+   * their default.
+   *
+   * The CLI refuses to clear the override (`contextWindow must be a positive
+   * safe integer`), so the adapter sends the model's default instead when the
+   * page returns to "default".
+   */
+  private async applyContextWindow(session: SessionImpl): Promise<void> {
+    const window = this.contextWindow
+    if (window === undefined) return
+    const key = `${this.model}:${window}`
+    if (this.appliedWindow === key) return
+    this.appliedWindow = key
+    try {
+      await session.setConfig({ contextWindow: window })
+    } catch {
+      // `Allowed: <none>` models have one fixed window; their default stands.
+    }
   }
 
   /**
@@ -1031,8 +1070,10 @@ export class CodeBuddySession {
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
       // A model switch on a warm session is a control request; waiting for it
-      // keeps the next prompt on the model the host just resolved.
+      // keeps the next prompt on the model the host just resolved. The window
+      // follows it: the CLI validates the value against the current model.
       await session.setModel(this.model)
+      await this.applyContextWindow(session)
       if (feed !== null && feed.length > 0) {
         const content = typeof feed === 'string'
           ? feed
