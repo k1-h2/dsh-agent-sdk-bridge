@@ -88,7 +88,20 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
      * only shape the CLI sends to the model as pixels.
      */
     private buildFeed;
+    /**
+     * The window this model actually runs with.
+     *
+     * The user's override only applies where the provider accepts one. Every
+     * model in the current catalog reports `supportedLengths: null`, so the CLI
+     * answers a `set_config.contextWindow` with `Allowed: <none>`; a stored
+     * override would then make DSH show a denominator the upstream never uses,
+     * which is exactly how the context ring drifted.
+     */
     contextWindowFor(id: string, region?: CodeBuddyRegion): number | undefined;
+    /** The catalog snapshot the adapter last read (empty before the first read). */
+    private models;
+    /** Whether this model lets the user pick a context budget at all. */
+    supportsContextWindowChoice(id: string, region?: CodeBuddyRegion): boolean;
     listModels(provider: string): Promise<readonly LlmModelInfo[]>;
     resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
     prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;

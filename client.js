@@ -62,6 +62,8 @@ window.__ModuleLoader__.load({
       colEnabled: '启用',
       windowDefault: '默认',
       windowDefaultHint: '跟随上游声明的窗口',
+      windowFixed: '上游固定',
+      windowFixedHint: '该模型在上游只提供这一个上下文窗口，选择其它值会被上游拒绝，因此这里不提供下拉选择。',
       vision: '读图',
       free: '免费',
       advanced: '高级设置',
@@ -250,6 +252,8 @@ window.__ModuleLoader__.load({
       colEnabled: 'On',
       windowDefault: 'Default',
       windowDefaultHint: "Follow upstream's declared window",
+      windowFixed: 'fixed upstream',
+      windowFixedHint: 'This model offers exactly one context window upstream; any other value is rejected, so there is no selector here.',
       vision: 'Vision',
       free: 'Free',
       advanced: 'Advanced',
@@ -2136,6 +2140,10 @@ window.__ModuleLoader__.load({
 
       const rows = shown.map((m, index) => {
         const choices = Array.isArray(m.contextWindows) ? m.contextWindows : []
+        // A model the provider pins to one window has nothing to choose: the
+        // CLI rejects every other value, so a dropdown here would be a control
+        // that never reaches the upstream. Show the value instead.
+        const fixedWindow = m.contextWindowSelectable === false || choices.length === 0
         return h('div', {
           key: m.id,
           style: { ...css.row, ...(index === 0 ? css.rowFirst : {}), ...(m.enabled ? {} : css.rowOff) },
@@ -2158,19 +2166,24 @@ window.__ModuleLoader__.load({
             ),
             h('div', { style: css.id }, m.id),
           ),
-          h('select', {
-            style: css.select,
-            value: m.override === undefined ? '' : String(m.override),
-            disabled: busy,
-            title: t('windowDefaultHint'),
-            onChange: event => {
-              const value = event.target.value
-              void writeWindow(all, m.id, value === '' ? undefined : Number(value))
-            },
-          },
-            h('option', { key: 'default', value: '' }, `${t('windowDefault')} · ${windowLabel(m.defaultContextWindow)}`),
-            choices.map(n => h('option', { key: String(n), value: String(n) }, windowLabel(n))),
-          ),
+          fixedWindow
+            ? h('span', {
+                style: { ...css.note, minWidth: '104px', textAlign: 'right' },
+                title: t('windowFixedHint'),
+              }, `${windowLabel(m.contextWindow ?? m.defaultContextWindow)} · ${t('windowFixed')}`)
+            : h('select', {
+                style: css.select,
+                value: m.override === undefined ? '' : String(m.override),
+                disabled: busy,
+                title: t('windowDefaultHint'),
+                onChange: event => {
+                  const value = event.target.value
+                  void writeWindow(all, m.id, value === '' ? undefined : Number(value))
+                },
+              },
+                h('option', { key: 'default', value: '' }, `${t('windowDefault')} · ${windowLabel(m.defaultContextWindow)}`),
+                choices.map(n => h('option', { key: String(n), value: String(n) }, windowLabel(n))),
+              ),
         )
       })
 

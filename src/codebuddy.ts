@@ -108,7 +108,16 @@ export interface CodeBuddyModel {
   description?: string
   maxInputTokens?: number
   maxOutputTokens?: number
+  /**
+   * Context budgets the provider actually accepts for this model.
+   *
+   * Empty means the model exposes no selectable window: CodeBuddy validates
+   * `set_config.contextWindow` against `contextWindow.supportedLengths` and
+   * rejects everything else with `Allowed: <none>`, so the settings page must
+   * not offer a choice the CLI will refuse.
+   */
   contextWindows: number[]
+  /** The window the model actually runs with (its physical input limit). */
   defaultContextWindow: number
   vision: boolean
   reasoningEfforts?: string[]
@@ -256,12 +265,15 @@ function priceFactorOf(model: RawLanguageModel): number | undefined {
 
 /** Turn one raw catalog entry into the model row this plugin uses. */
 export function toCodeBuddyModel(model: RawLanguageModel): CodeBuddyModel {
+  // Only what the provider declares as selectable is a choice. The physical
+  // `maxInputTokens` is the window the model runs with, not a menu entry:
+  // folding it into `contextWindows` offered 200K/1M switches that the CLI
+  // answered with `Invalid context_window value … Allowed: <none>`.
   const windows = new Set<number>(model.contextWindow?.supportedLengths ?? [])
   const declared = model.contextWindow?.defaultLength
     ?? model.maxInputTokens
     ?? model.maxAllowedSize
     ?? CODEBUDDY_DEFAULT_CONTEXT_WINDOW
-  windows.add(declared)
   return {
     id: model.id,
     name: model.name ?? model.id,
@@ -333,6 +345,16 @@ export class CodeBuddyCatalog {
     private readonly ttlMs: Live<number> = CODEBUDDY_CACHE_TTL_MS,
     private readonly timeoutMs: Live<number> = CODEBUDDY_FETCH_TIMEOUT_MS,
   ) {}
+
+  /**
+   * The last catalog read for a region, without fetching.
+   *
+   * Callers that must answer synchronously (deciding whether a model exposes a
+   * context-budget choice) use this instead of awaiting a refresh.
+   */
+  snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[] {
+    return this.snapshots.get(requested ?? readLive(this.region, 'global'))?.models ?? []
+  }
 
   /** Models for one region; a failed refresh keeps the last good list. */
   async models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]> {

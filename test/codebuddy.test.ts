@@ -28,7 +28,10 @@ describe('CodeBuddy model mapping', () => {
       id: 'glm-5.3',
       name: 'GLM-5.3',
       description: '旗舰模型',
-      contextWindows: [200_000, 400_000, 1_000_000],
+      // Only the declared selectable budgets. The default window (1M) is what
+      // the model runs with, not a menu entry: the CLI rejects any override
+      // outside `supportedLengths` with `Allowed: <none>`.
+      contextWindows: [200_000, 400_000],
       defaultContextWindow: 1_000_000,
       vision: true,
       reasoningEfforts: ['low', 'high'],
@@ -46,9 +49,20 @@ describe('CodeBuddy model mapping', () => {
       credits: 'x0.00 credits',
     })
     expect(model.defaultContextWindow).toBe(128_000)
+    // No declared budgets: this model runs at one fixed window upstream.
+    expect(model.contextWindows).toEqual([])
     expect(model.vision).toBe(false)
     expect(model.priceFactor).toBe(0)
     expect(model.name).toBe('text-model')
+  })
+
+  it('offers no window choice for a model the provider pins to one budget', () => {
+    // Every model in the current CodeBuddy catalog reports supportedLengths
+    // null; the CLI then answers `set_config.contextWindow` with
+    // `Invalid context_window value … Allowed: <none>`.
+    const model = toCodeBuddyModel({ id: 'deepseek-v4.1-flash', maxInputTokens: 1_000_000 })
+    expect(model.contextWindows).toEqual([])
+    expect(model.defaultContextWindow).toBe(1_000_000)
   })
 })
 

@@ -259,8 +259,32 @@ export class CodeBuddyAdapter extends LlmAdapter {
     return content
   }
 
+  /**
+   * The window this model actually runs with.
+   *
+   * The user's override only applies where the provider accepts one. Every
+   * model in the current catalog reports `supportedLengths: null`, so the CLI
+   * answers a `set_config.contextWindow` with `Allowed: <none>`; a stored
+   * override would then make DSH show a denominator the upstream never uses,
+   * which is exactly how the context ring drifted.
+   */
   contextWindowFor(id: string, region: CodeBuddyRegion = this.region): number | undefined {
-    return this.options.modelContextWindows?.(region)[id]
+    const override = this.options.modelContextWindows?.(region)[id]
+    if (override === undefined) return undefined
+    const live = this.models(region).find(entry => entry.id === id)
+    if (live === undefined) return override
+    return live.contextWindows.includes(override) ? override : undefined
+  }
+
+  /** The catalog snapshot the adapter last read (empty before the first read). */
+  private models(region: CodeBuddyRegion): readonly CodeBuddyModel[] {
+    return this.catalog.snapshot(region)
+  }
+
+  /** Whether this model lets the user pick a context budget at all. */
+  supportsContextWindowChoice(id: string, region: CodeBuddyRegion = this.region): boolean {
+    const live = this.models(region).find(entry => entry.id === id)
+    return live !== undefined && live.contextWindows.length > 0
   }
 
   override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {

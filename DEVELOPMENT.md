@@ -49,6 +49,15 @@
   `CODEBUDDY_AUTH_TOKEN` + 该目录启动。页面在切区域时用 `fresh=1` 绕开宿主缓存，并校验
   `/models` 回显的 `region`。设置页的所有分支都渲染相同的 h2 / intro / 卡片前缀，避免切区时
   卡片因子节点下标变化被重建、把下拉框弹回配置里的旧区域。
+- **CodeBuddy 的上下文窗口不可设**：目录里的 `contextWindow.supportedLengths` 才是可选项，
+  `maxInputTokens` 只是模型物理上限。实测当前目录**所有模型**都报 `supportedLengths: null`，
+  此时 `set_config{contextWindow}` 会被 CLI 拒绝：
+  `Invalid context_window value: "200000". Allowed: <none>`。因此 `contextWindows` 只收集
+  `supportedLengths`，`contextWindowFor()` 在模型不支持时返回 `undefined`（旧的按区域保存的
+  覆盖值也随之失效），`/models` 回传 `contextWindowSelectable`，页面把这类模型显示为
+  「上游固定」而不是给一个无效下拉框。上游真的声明多档时，菜单与覆盖值会自动恢复。
+  另注：`CBC_SESSION_CONFIG_SYNC=1` 时 `result._meta` 才带 `codebuddy.ai/contextWindow`，
+  它反映的是模型物理窗口（如 1000000），不是用户选择。
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
   额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。卡片里的积分包

@@ -32,7 +32,16 @@ export interface CodeBuddyModel {
     description?: string;
     maxInputTokens?: number;
     maxOutputTokens?: number;
+    /**
+     * Context budgets the provider actually accepts for this model.
+     *
+     * Empty means the model exposes no selectable window: CodeBuddy validates
+     * `set_config.contextWindow` against `contextWindow.supportedLengths` and
+     * rejects everything else with `Allowed: <none>`, so the settings page must
+     * not offer a choice the CLI will refuse.
+     */
     contextWindows: number[];
+    /** The window the model actually runs with (its physical input limit). */
     defaultContextWindow: number;
     vision: boolean;
     reasoningEfforts?: string[];
@@ -111,6 +120,13 @@ export declare class CodeBuddyCatalog {
     private readonly inflight;
     private readonly failures;
     constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>);
+    /**
+     * The last catalog read for a region, without fetching.
+     *
+     * Callers that must answer synchronously (deciding whether a model exposes a
+     * context-budget choice) use this instead of awaiting a refresh.
+     */
+    snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[];
     /** Models for one region; a failed refresh keeps the last good list. */
     models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]>;
     /** Why the last refresh failed, or undefined when it succeeded. */

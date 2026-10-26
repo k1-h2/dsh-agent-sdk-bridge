@@ -38,6 +38,13 @@ export interface ModelRow {
     override?: number;
     priceFactor?: number;
     reasoning: boolean;
+    /**
+     * Whether the provider accepts a context-budget choice for this model.
+     *
+     * Absent (Qoder, MiniMax) means the ordinary menu applies. `false` means the
+     * window is fixed upstream, so the page shows the value without a selector.
+     */
+    contextWindowSelectable?: boolean;
 }
 /** The adapters the API can reach, one per provider route. */
 export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter>>;

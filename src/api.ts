@@ -45,6 +45,13 @@ export interface ModelRow {
   override?: number
   priceFactor?: number
   reasoning: boolean
+  /**
+   * Whether the provider accepts a context-budget choice for this model.
+   *
+   * Absent (Qoder, MiniMax) means the ordinary menu applies. `false` means the
+   * window is fixed upstream, so the page shows the value without a selector.
+   */
+  contextWindowSelectable?: boolean
 }
 
 /** The adapters the API can reach, one per provider route. */
@@ -98,9 +105,12 @@ export async function buildCodeBuddyRows(
 ): Promise<ModelRow[]> {
   const live = await adapter.describeCatalog(region)
   return live.map(entry => {
+    // Only windows the provider accepts are offered. CodeBuddy validates
+    // `set_config.contextWindow` against `contextWindow.supportedLengths` and
+    // answers anything else with `Allowed: <none>`, so a menu entry the CLI
+    // refuses would be a switch that does nothing upstream.
     const override = adapter.contextWindowFor(entry.id, region)
     const choices = new Set<number>(entry.contextWindows)
-    choices.add(entry.defaultContextWindow)
     if (override !== undefined) choices.add(override)
     return {
       id: entry.id,
@@ -114,6 +124,7 @@ export async function buildCodeBuddyRows(
       ...override === undefined ? {} : { override },
       ...entry.priceFactor === undefined ? {} : { priceFactor: entry.priceFactor },
       reasoning: (entry.reasoningEfforts?.length ?? 0) > 0,
+      contextWindowSelectable: entry.contextWindows.length > 0,
     }
   })
 }

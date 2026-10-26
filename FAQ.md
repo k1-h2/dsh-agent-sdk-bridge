@@ -44,6 +44,15 @@ bearer token，只留在本机，请不要分享或提交到仓库。从旧版�
 `tools: []` 禁用 CLI 内置工具，只保留宿主通过 MCP 挂入的工具；CodeBuddy 把 MCP server 名
 规范成 `dsh_host` 的写法也已兼容。升级后重启 DSH Web 即可。
 
+**给 CodeBuddy 设了 1M 上下文，为什么对话里上下文环还是忽大忽小、有时突然变小？** 因为那个窗口
+设置**从未作用于上游**。CodeBuddy 只接受模型自己声明的档位（`contextWindow.supportedLengths`），
+而当前目录里所有模型都报 `null`；插件把物理上限（`maxInputTokens`）也塞进了可选档位，于是设置页
+出现了 200K / 1M 开关，实际下发时被 CLI 拒绝：
+`Invalid context_window value: "200000". Allowed: <none>`。上游仍按模型物理窗口运行，而 DSH 却按
+你选的窗口算百分比，两者不一致，环就会跳。现在可选档位只来自 `supportedLengths`；模型没有档位时
+页面显示「上游固定 · 1M」而不给下拉框，已保存的无效覆盖值也不再生效。上游将来真提供多档时，
+选择器会自动出现。
+
 **点了「登录」却没有弹出浏览器，或者弹出了两个？** CodeBuddy 的 CLI 在登录流程里会自己打开
 浏览器，插件只把登录链接显示在卡片上作为兜底，不再额外打开，所以一次登录只会有一个标签页。
 每次点击还会先清除该区域在 CLI 中缓存的旧凭据，再启动全新的授权流程；SDK 的 `authenticate()`
