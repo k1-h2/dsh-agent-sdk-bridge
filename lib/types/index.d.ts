@@ -41,10 +41,20 @@ interface WebServerService {
         handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
     }): () => void;
 }
+/**
+ * The mounted filesystem provider, used only to translate a host path into
+ * the execution world the host tools run in. Declared minimally so the plugin
+ * keeps only the peer dependencies it actually needs.
+ */
+interface FileSystemService {
+    processPathFromHostPath?(hostPath: string): string | undefined;
+}
 declare module '@deepseek-ai/cordis' {
     interface Context {
         /** Present only in web compositions; reached through a nested inject. */
         webServer?: WebServerService;
+        /** Present when a filesystem provider is mounted; reached by inject. */
+        fs?: FileSystemService;
     }
     interface Events {
         /**

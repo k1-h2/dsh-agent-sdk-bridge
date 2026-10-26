@@ -22,15 +22,14 @@ import {
   minimaxColdStream, minimaxRegionBlockMessage, minimaxRegionBlocked,
   minimaxRegionBlockedCached, minimaxSignedIn, minimaxUsage,
 } from './minimax.ts'
-import { textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type { MinimaxModel, MinimaxPromptBlock, MinimaxUsageSnapshot } from './minimax.ts'
 import { resolveMinimaxCli } from './minimax-cli.ts'
 import { reasoningInfo, planContinuation } from './adapter.ts'
 import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
-import type { Feed } from './render.ts'
-import { feedImageRefs, feedToText, renderInitialFeed, resolvedFeedParts } from './render.ts'
+import type { Feed, ImagePathResolver } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, resolvedFeedParts } from './render.ts'
 
 /** The MiniMax Code provider route. */
 export const MINIMAX_PROVIDER = 'minimax-acp'
@@ -56,6 +55,11 @@ export interface MinimaxAdapterOptions {
    * store) → images degrade to their handle text instead of failing the turn.
    */
   readImage?: ImageRequestReader
+  /**
+   * The tool-world path of one image, for the handle text that lets the model
+   * edit it. Absent → an unreadable image keeps the harness placeholder.
+   */
+  imagePath?: ImagePathResolver
 }
 
 const NO_MODELS: readonly string[] = []
@@ -90,6 +94,8 @@ export class MinimaxAdapter extends LlmAdapter {
   private readonly auth = new MinimaxAuth()
   private readonly mcpServer = new MinimaxMcpServer()
   private readonly disabledCache = new Map<MinimaxRegion, { key: string, set: ReadonlySet<string> }>()
+  /** Last verified image capability, keyed `${region}:${model}`. */
+  private readonly knownVision = new Map<string, boolean>()
 
   constructor(options: MinimaxAdapterOptions = {}) {
     super()
@@ -136,7 +142,9 @@ export class MinimaxAdapter extends LlmAdapter {
   async describeCatalog(region: MinimaxRegion = this.region): Promise<readonly MinimaxModel[]> {
     if (!this.isSignedIn(region)) return []
     if (await minimaxRegionBlocked(region)) return []
-    return this.catalog.models(region)
+    const models = await this.catalog.models(region)
+    for (const model of models) this.knownVision.set(`${region}:${model.id}`, model.vision)
+    return models
   }
 
   /** Whether the region's endpoints are refusing this machine's network. */
@@ -246,8 +254,10 @@ export class MinimaxAdapter extends LlmAdapter {
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const region = this.region
     const target = resolveMinimaxModelId(model, this.aliases)
+    const key = `${region}:${target}`
     const live = (await this.catalog.models(region)).find(entry => entry.id === target)
     if (live !== undefined) {
+      this.knownVision.set(key, live.vision)
       const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, live.reasoning)
       return {
         provider,
@@ -269,7 +279,7 @@ export class MinimaxAdapter extends LlmAdapter {
       provider,
       id: model,
       name: model,
-      inputModalities: ['text'],
+      inputModalities: this.knownVision.get(key) === true ? ['text', 'image'] : ['text'],
       context: { contextWindow: this.contextWindowFor(target, region) ?? MINIMAX_DEFAULT_CONTEXT_WINDOW },
       defaultMaxTokens: readLive(this.options.defaultMaxTokens, MINIMAX_DEFAULT_MAX_TOKENS),
       ...reasoning === undefined ? {} : { reasoning },
@@ -297,7 +307,7 @@ export class MinimaxAdapter extends LlmAdapter {
     }
     const model = resolveMinimaxModelId(options.model, this.aliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
-      const prompt = feedToText(renderInitialFeed(options.system, options.messages))
+      const prompt = feedToText(renderInitialFeed(options.system, options.messages, this.options.imagePath), this.options.imagePath)
         + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'
       for (const chunk of await minimaxColdStream(region, prompt, model, options)) yield chunk
       return
@@ -367,7 +377,7 @@ export class MinimaxAdapter extends LlmAdapter {
     session.fedSystem = options.system
     const vision = await this.modelVision(model, region)
     const feed = await this.buildFeed(
-      renderInitialFeed(undefined, options.messages),
+      renderInitialFeed(undefined, options.messages, this.options.imagePath),
       vision,
       options.signal,
     )
@@ -377,8 +387,15 @@ export class MinimaxAdapter extends LlmAdapter {
   /** Whether the resolved model accepts images (drives whether pixels are sent). */
   private async modelVision(model: string, region: MinimaxRegion): Promise<boolean> {
     const target = resolveMinimaxModelId(model, this.aliases)
+    const key = `${region}:${target}`
     const live = (await this.catalog.models(region).catch(() => [])).find(entry => entry.id === target)
-    return live?.vision === true
+    if (live !== undefined) {
+      this.knownVision.set(key, live.vision)
+      return live.vision
+    }
+    // Keep a verified vision capability across a missed catalog read; otherwise
+    // DSH strips the pixels before this adapter ever runs.
+    return this.knownVision.get(key) === true
   }
 
   /**
@@ -395,7 +412,7 @@ export class MinimaxAdapter extends LlmAdapter {
     signal?: AbortSignal,
   ): Promise<string | MinimaxPromptBlock[]> {
     if (typeof feed === 'string') return feed
-    if (!vision) return feedToText(feed)
+    if (!vision) return feedToText(feed, this.options.imagePath)
     const images = new Map<string, { data: string, mediaType: string }>()
     const readImage = this.options.readImage
     if (readImage !== undefined) {
@@ -422,10 +439,17 @@ export class MinimaxAdapter extends LlmAdapter {
         content.push({ type: 'text', text: part.text })
         continue
       }
-      if (part.type === 'image-unreadable') {
-        content.push({ type: 'text', text: textOnlyImageText(part.attachment) })
-        continue
-      }
+      // The pixels let the model read the image; this handle lets it find and
+      // edit the source file. Without it a "modify this image" turn searches
+      // the workspace for a file that was never there.
+      const path = this.options.imagePath?.(part.attachment)
+      content.push({
+        type: 'text',
+        text: part.type === 'image-unreadable' && path === undefined
+          ? `[图片附件 ${String(part.attachment.attachmentId)} 本次未能读取，请基于文字内容继续]`
+          : imageRefText(part.attachment, path),
+      })
+      if (part.type === 'image-unreadable') continue
       content.push({ type: 'image', data: part.data, mimeType: part.mediaType })
     }
     return content

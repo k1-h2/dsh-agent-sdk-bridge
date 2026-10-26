@@ -15,6 +15,7 @@ import { CodeBuddyAuth } from './codebuddy.ts';
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts';
 import type { ImageRequestReader } from './adapter.ts';
 import type { Live } from './live.ts';
+import type { ImagePathResolver } from './render.ts';
 /** The CodeBuddy provider route. */
 export declare const CODEBUDDY_PROVIDER = "codebuddy";
 /** Everything the adapter reads lazily from the plugin config. */
@@ -38,6 +39,11 @@ export interface CodeBuddyAdapterOptions {
      * store) → images degrade to their handle text instead of failing the turn.
      */
     readImage?: ImageRequestReader;
+    /**
+     * The tool-world path of one image, for the handle text that lets the model
+     * edit it. Absent → an unreadable image keeps the harness placeholder.
+     */
+    imagePath?: ImagePathResolver;
 }
 /** Map a harness-side id onto a CodeBuddy model value. */
 export declare function resolveCodeBuddyModelId(model: string, aliases?: Readonly<Record<string, string>>): string;
@@ -49,6 +55,8 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     private readonly accounts;
     private readonly auth;
     private readonly disabledCache;
+    /** Last verified image capability, keyed `${region}:${model}`. */
+    private readonly knownVision;
     constructor(options?: CodeBuddyAdapterOptions);
     private get region();
     private disabledFor;

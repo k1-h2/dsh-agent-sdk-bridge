@@ -13,7 +13,7 @@
  * @module dsh-llm-qoder/render
  */
 
-import { fileHandleText, offloadedImageText, textOnlyImageText } from '@deepseek-ai/dsh-llm'
+import { fileHandleText, offloadedImageText, requestImageHandleText, textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, RequestMessage } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { countWideChars } from './tokens.ts'
@@ -22,6 +22,25 @@ import { countWideChars } from './tokens.ts'
 export type FeedPart =
   | { type: 'text', text: string }
   | { type: 'image', attachment: ImageAttachmentRef }
+
+/** Resolve the tool-world path of one durable image attachment. */
+export type ImagePathResolver = (ref: ImageAttachmentRef) => string | undefined
+
+/**
+ * Model-facing handle for one image.
+ *
+ * The host's native adapters use the same text: it names the attachment, its
+ * pixel size and media type, and the read-only normalized copy on disk, and it
+ * tells the model to copy that file to a writable path before editing. Pixels
+ * alone let a model describe an image but not process it — without this path
+ * the model goes looking through the workspace for a file that was never there.
+ */
+export function imageRefText(ref: ImageAttachmentRef, path: string | undefined): string {
+  if (path === undefined) {
+    return `[图片附件 ${String(ref.attachmentId)}（${ref.width}×${ref.height}px，${ref.mediaType}）]`
+  }
+  return requestImageHandleText(ref, { width: ref.width, height: ref.height }, { readonlyPath: path })
+}
 
 /** What one inner turn receives: text (the historical shape) or text + images. */
 export type Feed = string | FeedPart[]
@@ -40,12 +59,13 @@ export function imageRefs(blocks: readonly ContentBlock[]): ImageAttachmentRef[]
 }
 
 /** Render one content-block list as plain text; non-text blocks get handles. */
-export function renderBlocks(blocks: readonly ContentBlock[]): string {  const parts: string[] = []
+export function renderBlocks(blocks: readonly ContentBlock[], imagePath?: ImagePathResolver): string {
+  const parts: string[] = []
   for (const block of blocks) {
     switch (block.type) {
       case 'text': parts.push(block.text); break
       case 'reasoning': break
-      case 'image': parts.push(block.offloaded === true ? offloadedImageText(block.attachment) : textOnlyImageText(block.attachment)); break
+      case 'image': parts.push(block.offloaded === true ? offloadedImageText(block.attachment) : imageRefText(block.attachment, imagePath?.(block.attachment))); break
       case 'file': parts.push(fileHandleText(block.attachment, undefined)); break
       case 'tool-call': parts.push(`[调用了工具 ${block.name}(${block.arguments})]`); break
       case 'tool-addition': parts.push(`[工具启用 ${block.toolName}]`); break
@@ -71,8 +91,8 @@ function roleTag(message: RequestMessage): string {
  * Render one request message with its role tag. A request-only user input has
  * no durable identity or source, so it reads exactly like a user message.
  */
-export function renderMessage(message: RequestMessage): string {
-  return `[${roleTag(message)}] ${renderBlocks(message.content)}`
+export function renderMessage(message: RequestMessage, imagePath?: ImagePathResolver): string {
+  return `[${roleTag(message)}] ${renderBlocks(message.content, imagePath)}`
 }
 
 /** Preamble establishing the inner model's role as this agent's LLM backend. */
@@ -158,10 +178,16 @@ export function feedImageRefs(feed: Feed): ImageAttachmentRef[] {
 }
 
 /** Flatten a feed back to text, replacing images with the harness handle text. */
-export function feedToText(feed: Feed): string {
+export function feedToText(feed: Feed, imagePath?: ImagePathResolver): string {
   if (typeof feed === 'string') return feed
   return feed
-    .map(part => part.type === 'text' ? part.text : textOnlyImageText(part.attachment))
+    .map(part => {
+      if (part.type === 'text') return part.text
+      const path = imagePath?.(part.attachment)
+      // This function is used only where pixels are not sent, so the harness's
+      // "text only" wording is accurate when no path is available.
+      return path === undefined ? textOnlyImageText(part.attachment) : imageRefText(part.attachment, path)
+    })
     .filter(text => text.length > 0)
     .join('\n\n')
 }
@@ -169,7 +195,7 @@ export function feedToText(feed: Feed): string {
 /** One feed element after image bytes have been resolved (base64). */
 export type ResolvedFeedPart =
   | { type: 'text', text: string }
-  | { type: 'image', data: string, mediaType: string }
+  | { type: 'image', attachment: ImageAttachmentRef, data: string, mediaType: string }
   | { type: 'image-unreadable', attachment: ImageAttachmentRef }
 
 /**
@@ -195,7 +221,7 @@ export function resolvedFeedParts(feed: Feed, images: ReadonlyMap<string, { data
     const resolved = images.get(String(part.attachment.attachmentId))
     parts.push(resolved === undefined
       ? { type: 'image-unreadable', attachment: part.attachment }
-      : { type: 'image', data: resolved.data, mediaType: resolved.mediaType })
+      : { type: 'image', attachment: part.attachment, data: resolved.data, mediaType: resolved.mediaType })
   }
   return parts
 }
@@ -222,14 +248,18 @@ export function feedWideCharCount(feed: Feed): number {
  * prompt, and the existing conversation as compact context. Messages of the
  * current turn keep their image references; earlier ones are handles.
  */
-export function renderInitialFeed(system: string | undefined, messages: readonly RequestMessage[]): Feed {
+export function renderInitialFeed(
+  system: string | undefined,
+  messages: readonly RequestMessage[],
+  imagePath?: ImagePathResolver,
+): Feed {
   const from = currentTurnStart(messages)
   const history: Feed[] = []
   for (const [index, message] of messages.entries()) {
     const entry: Feed = index >= from && imageRefs(message.content).length > 0
       ? label(`[${roleTag(message)}] `, blockParts(message.content))
-      : renderMessage(message)
-    if (feedToText(entry).length > 0) history.push(entry)
+      : renderMessage(message, imagePath)
+    if (feedToText(entry, imagePath).length > 0) history.push(entry)
   }
   const sections: Feed[] = [BACKEND_ROLE]
   if (system !== undefined && system.length > 0) {

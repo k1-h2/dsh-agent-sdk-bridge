@@ -417,7 +417,7 @@ describe('MiniMax prompt content', () => {
     )
     expect(parts).toEqual([
       { type: 'text', text: '这张图是什么' },
-      { type: 'image', data: 'QUJD', mediaType: 'image/png' },
+      { type: 'image', attachment, data: 'QUJD', mediaType: 'image/png' },
     ])
   })
 

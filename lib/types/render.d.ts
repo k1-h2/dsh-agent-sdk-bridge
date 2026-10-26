@@ -22,6 +22,18 @@ export type FeedPart = {
     type: 'image';
     attachment: ImageAttachmentRef;
 };
+/** Resolve the tool-world path of one durable image attachment. */
+export type ImagePathResolver = (ref: ImageAttachmentRef) => string | undefined;
+/**
+ * Model-facing handle for one image.
+ *
+ * The host's native adapters use the same text: it names the attachment, its
+ * pixel size and media type, and the read-only normalized copy on disk, and it
+ * tells the model to copy that file to a writable path before editing. Pixels
+ * alone let a model describe an image but not process it — without this path
+ * the model goes looking through the workspace for a file that was never there.
+ */
+export declare function imageRefText(ref: ImageAttachmentRef, path: string | undefined): string;
 /** What one inner turn receives: text (the historical shape) or text + images. */
 export type Feed = string | FeedPart[];
 /**
@@ -31,12 +43,12 @@ export type Feed = string | FeedPart[];
  */
 export declare function imageRefs(blocks: readonly ContentBlock[]): ImageAttachmentRef[];
 /** Render one content-block list as plain text; non-text blocks get handles. */
-export declare function renderBlocks(blocks: readonly ContentBlock[]): string;
+export declare function renderBlocks(blocks: readonly ContentBlock[], imagePath?: ImagePathResolver): string;
 /**
  * Render one request message with its role tag. A request-only user input has
  * no durable identity or source, so it reads exactly like a user message.
  */
-export declare function renderMessage(message: RequestMessage): string;
+export declare function renderMessage(message: RequestMessage, imagePath?: ImagePathResolver): string;
 /**
  * Join feed sections into one feed. While no section carries an image the
  * result is the historical text shape, sections separated by a blank line;
@@ -55,13 +67,14 @@ export declare function currentTurnStart(messages: readonly RequestMessage[]): n
 /** Image references carried by a feed, in order. */
 export declare function feedImageRefs(feed: Feed): ImageAttachmentRef[];
 /** Flatten a feed back to text, replacing images with the harness handle text. */
-export declare function feedToText(feed: Feed): string;
+export declare function feedToText(feed: Feed, imagePath?: ImagePathResolver): string;
 /** One feed element after image bytes have been resolved (base64). */
 export type ResolvedFeedPart = {
     type: 'text';
     text: string;
 } | {
     type: 'image';
+    attachment: ImageAttachmentRef;
     data: string;
     mediaType: string;
 } | {
@@ -95,7 +108,7 @@ export declare function feedWideCharCount(feed: Feed): number;
  * prompt, and the existing conversation as compact context. Messages of the
  * current turn keep their image references; earlier ones are handles.
  */
-export declare function renderInitialFeed(system: string | undefined, messages: readonly RequestMessage[]): Feed;
+export declare function renderInitialFeed(system: string | undefined, messages: readonly RequestMessage[], imagePath?: ImagePathResolver): Feed;
 /** Render a brand-new host user turn; images stay references, text-only stays a string. */
 export declare function renderUserTurn(blocks: readonly ContentBlock[]): Feed;
 /** Render an in-place-updated message (runtime-context snapshots and the like). */

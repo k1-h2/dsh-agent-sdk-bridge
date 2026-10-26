@@ -13,7 +13,7 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
 import type { QoderBrand } from './brand.ts';
 import type { Live } from './live.ts';
 import { QoderModelCatalog } from './models.ts';
-import type { Feed } from './render.ts';
+import type { Feed, ImagePathResolver } from './render.ts';
 import type { UsageSnapshot } from './usage.ts';
 /**
  * Read one durable image occurrence into the bytes a request sends.
@@ -40,6 +40,11 @@ export interface QoderAdapterOptions {
     modelCacheTtlMs?: Live<number>;
     /** Request-image reader; absent → images are never forwarded as pixels. */
     readImage?: ImageRequestReader;
+    /**
+     * The tool-world path of one image, for the handle text that lets the model
+     * edit it. Absent → an unreadable image keeps the harness placeholder.
+     */
+    imagePath?: ImagePathResolver;
     /** How long an unpaired MCP tool handler waits before failing its call. */
     toolResultTimeoutMs?: Live<number>;
     /** How long the inner process gets to acknowledge an abort. */
@@ -152,6 +157,7 @@ export declare class QoderAdapter extends LlmAdapter {
     private readonly catalog;
     private readonly usage;
     private readonly readImage;
+    private readonly imagePath;
     private readonly brand;
     /**
      * Memoized `Set` view of the disabled-model list.
@@ -170,6 +176,15 @@ export declare class QoderAdapter extends LlmAdapter {
      * compacting a history that was still only ~10% of the real window.
      */
     private readonly knownWindows;
+    /**
+     * Last verified image capability per route.
+     *
+     * A missed catalog refresh used to fall back to text-only, and DSH then
+     * stripped the pixels before this adapter ran: a vision model silently lost
+     * the image for that turn. Remembering the last answer keeps the declared
+     * capability stable across a transient miss.
+     */
+    private readonly knownVision;
     constructor(options?: QoderAdapterOptions);
     private get defaultMaxTokens();
     private get modelContextWindows();

@@ -74,6 +74,15 @@
   `/models` 回传 `contextWindowSelectable`，页面把固定窗口模型显示为「上游固定」。
   另注：`CBC_SESSION_CONFIG_SYNC=1` 时 `result._meta` 的 `codebuddy.ai/contextWindow` 是模型
   物理窗口（如 1000000），不是用户选择。
+- **图片要同时给像素和路径**：DSH 原生适配器除了图片块，还会附一句
+  `requestImageHandleText()`——附件名、像素尺寸、**只读归一化副本的宿主路径**，以及「编辑前先复制成
+  可写 `.png`」的指示。桥接此前只发像素：模型能看懂图，但用户说「取反色保存」时它去工作区找一个
+  从未存在过的文件（Qoder 的原话是「图片没有保存在工作目录中」），而 DeepSeek 官方因为有路径能直接
+  处理。现在 `render.ts` 的 `imageRefText()` 复用同一文案，`ImagePathResolver` 由
+  `ctx.attachments.imageHostPath()` 取宿主路径、再经 `ctx.fs.processPathFromHostPath()` 映射到工具
+  执行世界；Qoder / CodeBuddy / MiniMax 在图片块前插入这条句柄，历史图片（rebuild 时按文本重放、
+  不发像素）同样带路径。另外三个适配器都会记住每个路由上一次验证过的 `vision` 能力：目录某次读不到
+  时不再谎报 text-only——那会让 DSH 在适配器之前就把像素剥成占位符。
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
   额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。卡片里的积分包

@@ -54,10 +54,21 @@ interface WebServerService {
   }): () => void
 }
 
+/**
+ * The mounted filesystem provider, used only to translate a host path into
+ * the execution world the host tools run in. Declared minimally so the plugin
+ * keeps only the peer dependencies it actually needs.
+ */
+interface FileSystemService {
+  processPathFromHostPath?(hostPath: string): string | undefined
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Present only in web compositions; reached through a nested inject. */
     webServer?: WebServerService
+    /** Present when a filesystem provider is mounted; reached by inject. */
+    fs?: FileSystemService
   }
 
   interface Events {
@@ -208,6 +219,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   // plugin's answer for the rest of the process lifetime.
   const live = liveConfig(config)
   let attachments: AttachmentStore | undefined
+  let filesystem: FileSystemService | undefined
 
   /**
    * Everything both editions share.
@@ -234,6 +246,20 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       // it, so only the byte ceiling binds the request version.
       return store.readImageRequest(ref, { width: ref.width, height: ref.height, maxBytes: REQUEST_IMAGE_MAX_BYTES }, signal)
         .then(image => ({ bytes: image.data, mediaType: image.mediaType }))
+    },
+    /**
+     * Where the model can find the image on disk. Pixels let it describe the
+     * picture; this path lets a "modify and save it" turn act on the file
+     * instead of searching the workspace for something that was never there.
+     */
+    imagePath: (ref: ImageAttachmentRef): string | undefined => {
+      const store = attachments
+      if (store === undefined) return undefined
+      const hostPath = store.imageHostPath(ref)
+      if (hostPath === undefined) return undefined
+      // Prefer the mounted tools' view of the same file; the local provider
+      // maps identically, a sandboxed one may not.
+      return filesystem?.processPathFromHostPath?.(hostPath) ?? hostPath
     },
   }
 
@@ -279,6 +305,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
         : live.codebuddyGlobalModelContextWindows(),
       modelAliases: live.codebuddyModelAliases,
       readImage: shared.readImage,
+      imagePath: shared.imagePath,
     }),
     minimax: new MinimaxAdapter({
       maxSessions: live.maxSessions,
@@ -298,12 +325,18 @@ export function apply(ctx: Context, config: ParsedConfig): void {
         : live.minimaxGlobalModelContextWindows(),
       modelAliases: live.minimaxModelAliases,
       readImage: shared.readImage,
+      imagePath: shared.imagePath,
     }),
   }
 
   ctx.inject(['attachments'], (scope) => {
     attachments = scope.attachments
     scope.effect(() => () => { attachments = undefined }, 'llm-qoder-cn.attachments')
+  })
+
+  ctx.inject(['fs'], (scope) => {
+    filesystem = scope.fs
+    scope.effect(() => () => { filesystem = undefined }, 'llm-qoder-cn.fs')
   })
 
   // Routes and the provider directory are the two shapes a live value cannot

@@ -15,6 +15,7 @@ import { MinimaxAuth } from './minimax.ts';
 import type { MinimaxModel, MinimaxUsageSnapshot } from './minimax.ts';
 import type { ImageRequestReader } from './adapter.ts';
 import type { Live } from './live.ts';
+import type { ImagePathResolver } from './render.ts';
 /** The MiniMax Code provider route. */
 export declare const MINIMAX_PROVIDER = "minimax-acp";
 /** Everything the adapter reads lazily from the plugin config. */
@@ -38,6 +39,11 @@ export interface MinimaxAdapterOptions {
      * store) → images degrade to their handle text instead of failing the turn.
      */
     readImage?: ImageRequestReader;
+    /**
+     * The tool-world path of one image, for the handle text that lets the model
+     * edit it. Absent → an unreadable image keeps the harness placeholder.
+     */
+    imagePath?: ImagePathResolver;
 }
 /** Map a harness-side id onto an ACP model value. */
 export declare function resolveMinimaxModelId(model: string, aliases?: Readonly<Record<string, string>>): string;
@@ -49,6 +55,8 @@ export declare class MinimaxAdapter extends LlmAdapter {
     private readonly auth;
     private readonly mcpServer;
     private readonly disabledCache;
+    /** Last verified image capability, keyed `${region}:${model}`. */
+    private readonly knownVision;
     constructor(options?: MinimaxAdapterOptions);
     private get region();
     private disabledFor;

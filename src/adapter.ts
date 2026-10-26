@@ -23,8 +23,8 @@ import type { ResolvedConfig } from './config.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import { DEFAULT_MODEL_CACHE_TTL_MS, DEFAULT_FETCH_TIMEOUT_MS, QoderModelCatalog } from './models.ts'
-import { feedImageRefs, feedToText, imageRefs, joinFeeds, renderInitialFeed, renderRefreshed, renderUserTurn } from './render.ts'
-import type { Feed } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, imageRefs, joinFeeds, renderInitialFeed, renderRefreshed, renderUserTurn } from './render.ts'
+import type { Feed, ImagePathResolver } from './render.ts'
 import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
 import type { ChannelContent, ResolvedImages, SessionModelPolicy } from './session.ts'
 import type { UsageSnapshot } from './usage.ts'
@@ -56,6 +56,11 @@ export interface QoderAdapterOptions {
   modelCacheTtlMs?: Live<number>
   /** Request-image reader; absent → images are never forwarded as pixels. */
   readImage?: ImageRequestReader
+  /**
+   * The tool-world path of one image, for the handle text that lets the model
+   * edit it. Absent → an unreadable image keeps the harness placeholder.
+   */
+  imagePath?: ImagePathResolver
   /** How long an unpaired MCP tool handler waits before failing its call. */
   toolResultTimeoutMs?: Live<number>
   /** How long the inner process gets to acknowledge an abort. */
@@ -269,6 +274,7 @@ export class QoderAdapter extends LlmAdapter {
   private readonly catalog: QoderModelCatalog
   private readonly usage: QoderUsage
   private readonly readImage: ImageRequestReader | undefined
+  private readonly imagePath: ImagePathResolver | undefined
   private readonly brand: QoderBrand
   /**
    * Memoized `Set` view of the disabled-model list.
@@ -287,6 +293,15 @@ export class QoderAdapter extends LlmAdapter {
    * compacting a history that was still only ~10% of the real window.
    */
   private readonly knownWindows = new Map<string, { window: number, available?: readonly number[] }>()
+  /**
+   * Last verified image capability per route.
+   *
+   * A missed catalog refresh used to fall back to text-only, and DSH then
+   * stripped the pixels before this adapter ran: a vision model silently lost
+   * the image for that turn. Remembering the last answer keeps the declared
+   * capability stable across a transient miss.
+   */
+  private readonly knownVision = new Map<string, boolean>()
 
   constructor(options: QoderAdapterOptions = {}) {
     super()
@@ -305,6 +320,7 @@ export class QoderAdapter extends LlmAdapter {
     )
     this.usage = new QoderUsage(this.brand, options.usageCacheTtlMs)
     this.readImage = options.readImage
+    this.imagePath = options.imagePath
   }
 
   private get defaultMaxTokens(): number {
@@ -380,9 +396,12 @@ export class QoderAdapter extends LlmAdapter {
    */
   async describeCatalog(): Promise<Awaited<ReturnType<QoderModelCatalog['liveModels']>>> {
     const live = await this.catalog.liveModels()
-    // Seed the remembered windows here too, so the settings page's rows and
-    // the request path validate a stored choice against the same catalog.
-    for (const entry of live) this.declaredWindow(entry.value, entry)
+    // Seed the remembered windows and capabilities here too, so the settings
+    // page's rows and the request path validate against the same catalog.
+    for (const entry of live) {
+      this.declaredWindow(entry.value, entry)
+      this.knownVision.set(entry.value, entry.isVl === true)
+    }
     return live
   }
 
@@ -475,6 +494,8 @@ export class QoderAdapter extends LlmAdapter {
     const target = resolveQoderModelId(model, this.modelAliases)
     const live = (await this.catalog.liveModels()).find(entry => entry.value === target)
     if (live !== undefined) {
+      const vision = live.isVl === true
+      this.knownVision.set(target, vision)
       const reasoning = reasoningInfo(live.efforts, live.defaultEffort ?? this.defaultReasoningEffort, live.isReasoning)
       return {
         provider,
@@ -485,7 +506,7 @@ export class QoderAdapter extends LlmAdapter {
         // projects images to handle text for a route that omits it, so a claim
         // the CLI did not make would silently drop pixels; the reverse error
         // would send pixels to a model that cannot read them.
-        inputModalities: live.isVl === true ? ['text' as const, 'image' as const] : ['text' as const],
+        inputModalities: vision ? ['text' as const, 'image' as const] : ['text' as const],
         context: {
           // The compaction engine and context meter price against the window a
           // request actually uses. Upstream reports three different numbers
@@ -506,10 +527,15 @@ export class QoderAdapter extends LlmAdapter {
       ? QODER_MODELS.find(entry => entry.id === target)
       : undefined
     const reasoning = reasoningInfo(undefined, this.defaultReasoningEffort, true)
+    // The live catalog is momentarily unavailable. Reuse the last verified
+    // capability rather than declaring text-only, which would make the harness
+    // drop pixels from a vision model for this turn.
+    const rememberedVision = this.knownVision.get(target) === true
     return Promise.resolve({
       ...configured === undefined
-        ? { provider, id: model, name: model, inputModalities: ['text' as const] }
+        ? { provider, id: model, name: model }
         : { ...modelInfo(provider, configured), id: model },
+      inputModalities: rememberedVision ? ['text' as const, 'image' as const] : ['text' as const],
       context: {
         contextWindow: this.declaredWindow(target, undefined),
       },
@@ -553,7 +579,7 @@ export class QoderAdapter extends LlmAdapter {
     const model = resolveQoderModelId(options.model, this.modelAliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
       // Side channels summarise text; pixels would only cost them context.
-      const prompt = feedToText(renderInitialFeed(options.system, options.messages))
+      const prompt = feedToText(renderInitialFeed(options.system, options.messages, this.imagePath), this.imagePath)
         + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'
       // Side channels (titles, compaction summaries) reuse the main session's
       // model so dsh's recorded summarization target matches what qodercli
@@ -599,7 +625,7 @@ export class QoderAdapter extends LlmAdapter {
     session.fedMessages = options.messages
     session.fedSystem = options.system
     const feed = plan.feed === null ? null : await this.buildFeed(plan.feed, generation.vision, images)
-    yield* session.stream(options, feed, plan.feed === null ? undefined : feedToText(plan.feed))
+    yield* session.stream(options, feed, plan.feed === null ? undefined : feedToText(plan.feed, this.imagePath))
   }
 
   private async *firstTurn(
@@ -619,9 +645,9 @@ export class QoderAdapter extends LlmAdapter {
     session.recordRequestInput(options.system, options.messages)
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const feed = renderInitialFeed(options.system, options.messages)
+    const feed = renderInitialFeed(options.system, options.messages, this.imagePath)
     const images = await this.resolveImages(feedImageRefs(feed), vision, options.signal)
-    yield* session.stream(options, await this.buildFeed(feed, vision, images), feedToText(feed))
+    yield* session.stream(options, await this.buildFeed(feed, vision, images), feedToText(feed, this.imagePath))
   }
 
   /** Image references carried by a message tail, skipping assistant content. */
@@ -669,7 +695,7 @@ export class QoderAdapter extends LlmAdapter {
     images: ResolvedImages,
   ): Promise<string | ChannelContent[]> {
     if (typeof feed === 'string') return feed
-    if (!vision) return feedToText(feed)
+    if (!vision) return feedToText(feed, this.imagePath)
     const content: ChannelContent[] = []
     let pixels = 0
     for (const part of feed) {
@@ -677,11 +703,20 @@ export class QoderAdapter extends LlmAdapter {
         if (part.text.length > 0) content.push({ type: 'text', text: part.text })
         continue
       }
-      const resolved = images.get(String(part.attachment.attachmentId))
+      const key = String(part.attachment.attachmentId)
+      const resolved = images.get(key)
+      const path = this.imagePath?.(part.attachment)
       if (resolved === undefined) {
-        content.push({ type: 'text', text: `[图片附件 ${String(part.attachment.attachmentId)} 本次未能读取，请基于文字内容继续]` })
+        content.push({
+          type: 'text',
+          text: `[图片附件 ${key} 本次未能读取${path === undefined ? '' : `；本机文件：${path}`}，请基于文字内容继续]`,
+        })
         continue
       }
+      // The pixels let the model read the image; this handle lets it find and
+      // edit the source file. Without it a "modify this image" turn searches
+      // the workspace for a file that was never there.
+      content.push({ type: 'text', text: imageRefText(part.attachment, path) })
       pixels += 1
       content.push({
         type: 'image',

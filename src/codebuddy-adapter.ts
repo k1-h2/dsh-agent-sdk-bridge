@@ -14,7 +14,6 @@ import type {
   GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo,
   PreparedAdapterCall, RequestMessage, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type { CodeBuddyRegion } from './brand.ts'
 import { codeBuddyColdStream, CodeBuddyAccountReader, CodeBuddyAuth, CodeBuddyCatalog, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './codebuddy.ts'
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts'
@@ -22,8 +21,8 @@ import { reasoningInfo, planContinuation } from './adapter.ts'
 import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
-import type { Feed } from './render.ts'
-import { feedImageRefs, feedToText, renderInitialFeed, resolvedFeedParts } from './render.ts'
+import type { Feed, ImagePathResolver } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, resolvedFeedParts } from './render.ts'
 import type { ChannelContent } from './session.ts'
 
 /** The CodeBuddy provider route. */
@@ -50,6 +49,11 @@ export interface CodeBuddyAdapterOptions {
    * store) → images degrade to their handle text instead of failing the turn.
    */
   readImage?: ImageRequestReader
+  /**
+   * The tool-world path of one image, for the handle text that lets the model
+   * edit it. Absent → an unreadable image keeps the harness placeholder.
+   */
+  imagePath?: ImagePathResolver
 }
 
 const NO_MODELS: readonly string[] = []
@@ -84,6 +88,8 @@ export class CodeBuddyAdapter extends LlmAdapter {
   private readonly accounts: CodeBuddyAccountReader
   private readonly auth = new CodeBuddyAuth()
   private readonly disabledCache = new Map<CodeBuddyRegion, { key: string, set: ReadonlySet<string> }>()
+  /** Last verified image capability, keyed `${region}:${model}`. */
+  private readonly knownVision = new Map<string, boolean>()
 
   constructor(options: CodeBuddyAdapterOptions = {}) {
     super()
@@ -134,7 +140,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
   /** The live catalog, unfiltered (the page must show switched-off models). */
   async describeCatalog(region: CodeBuddyRegion = this.region): Promise<readonly CodeBuddyModel[]> {
     if (!this.isSignedIn(region)) return []
-    return this.catalog.models(region)
+    const models = await this.catalog.models(region)
+    for (const model of models) this.knownVision.set(`${region}:${model.id}`, model.vision)
+    return models
   }
 
   /** Whether the selected (or given) region has a stored login. */
@@ -190,8 +198,16 @@ export class CodeBuddyAdapter extends LlmAdapter {
   /** Whether the resolved model accepts images (drives whether pixels are sent). */
   private async modelVision(model: string): Promise<boolean> {
     const target = resolveCodeBuddyModelId(model, this.aliases)
+    const key = `${this.region}:${target}`
     const live = (await this.catalog.models().catch(() => [])).find(entry => entry.id === target)
-    return live?.vision === true
+    if (live !== undefined) {
+      this.knownVision.set(key, live.vision)
+      return live.vision
+    }
+    // A missed catalog read must not turn a vision model into a text-only one:
+    // DSH strips pixels before this adapter runs when the declared capability
+    // says text only.
+    return this.knownVision.get(key) === true
   }
 
   /**
@@ -237,7 +253,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
     signal?: AbortSignal,
   ): Promise<string | ChannelContent[]> {
     if (typeof feed === 'string') return feed
-    if (!vision) return feedToText(feed)
+    if (!vision) return feedToText(feed, this.options.imagePath)
     const images = await this.resolveFeedImages(feed, vision, signal)
     const parts = resolvedFeedParts(feed, images)
     if (!parts.some(part => part.type !== 'text')) return parts.map(part => part.type === 'text' ? part.text : '').join('\n\n')
@@ -247,10 +263,17 @@ export class CodeBuddyAdapter extends LlmAdapter {
         content.push({ type: 'text', text: part.text })
         continue
       }
-      if (part.type === 'image-unreadable') {
-        content.push({ type: 'text', text: textOnlyImageText(part.attachment) })
-        continue
-      }
+      // The pixels let the model read the image; this handle lets it find and
+      // edit the source file. Without it a "modify this image" turn searches
+      // the workspace for a file that was never there.
+      const path = this.options.imagePath?.(part.attachment)
+      content.push({
+        type: 'text',
+        text: part.type === 'image-unreadable' && path === undefined
+          ? `[图片附件 ${String(part.attachment.attachmentId)} 本次未能读取，请基于文字内容继续]`
+          : imageRefText(part.attachment, path),
+      })
+      if (part.type === 'image-unreadable') continue
       content.push({
         type: 'image',
         source: { type: 'base64', media_type: part.mediaType, data: part.data },
@@ -297,8 +320,10 @@ export class CodeBuddyAdapter extends LlmAdapter {
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const target = resolveCodeBuddyModelId(model, this.aliases)
+    const key = `${this.region}:${target}`
     const live = (await this.catalog.models()).find(entry => entry.id === target)
     if (live !== undefined) {
+      this.knownVision.set(key, live.vision)
       const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, (live.reasoningEfforts?.length ?? 0) > 0)
       return {
         provider,
@@ -320,7 +345,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
       provider,
       id: model,
       name: model,
-      inputModalities: ['text'],
+      inputModalities: this.knownVision.get(key) === true ? ['text', 'image'] : ['text'],
       context: { contextWindow: this.contextWindowFor(target) ?? CODEBUDDY_DEFAULT_CONTEXT_WINDOW },
       defaultMaxTokens: readLive(this.options.defaultMaxTokens, CODEBUDDY_DEFAULT_MAX_TOKENS),
       ...reasoning === undefined ? {} : { reasoning },
@@ -345,7 +370,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
     }
     const model = resolveCodeBuddyModelId(options.model, this.aliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
-      const prompt = feedToText(renderInitialFeed(options.system, options.messages))
+      const prompt = feedToText(renderInitialFeed(options.system, options.messages, this.options.imagePath), this.options.imagePath)
         + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'
       for (const chunk of await codeBuddyColdStream(region, prompt, model, options)) yield chunk
       return
@@ -394,7 +419,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
     session.fedSystem = options.system
     const vision = await this.modelVision(options.model)
     const feed = await this.buildFeed(
-      renderInitialFeed(undefined, options.messages),
+      renderInitialFeed(undefined, options.messages, this.options.imagePath),
       vision,
       options.signal,
     )
