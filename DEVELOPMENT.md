@@ -51,7 +51,9 @@
   卡片因子节点下标变化被重建、把下拉框弹回配置里的旧区域。
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
-  额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。
+  额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。卡片里的积分包
+  与 Trae 适配器同一规则：`packageSummary()` 算出包数、合计额度与最近到期（跳过 year-9999
+  哨兵），默认只渲染这一行；展开后逐个包列在 190px 高的滚动区里，不再截断到前四个。
 - **MiniMax Code（ACP）**：`src/minimax.ts` 直接启动 `mcode acp` 并用
   `@agentclientprotocol/sdk` 的 `ClientSideConnection` 说话；`session/new` 的
   `configOptions` 提供模型与思考档位，`session/prompt` 的 `session/update` 通知被翻译成

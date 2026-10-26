@@ -16,10 +16,17 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
+interface PackageSummary {
+  count: number
+  total: number
+  nearest?: number
+}
+
 interface ClientTestFace {
   zh: Record<string, string>
   en: Record<string, string>
   tokenExpiryText: (t: (key: string) => string, ms: unknown, now?: number) => string
+  packageSummary: (packages: unknown) => PackageSummary
 }
 
 /** Evaluate the bundle the way the shell's loader does and take its test face. */
@@ -98,5 +105,38 @@ describe('client copy dictionaries', () => {
       const empty = Object.entries(table).filter(([, value]) => value === '')
       expect(empty, name).toEqual([])
     }
+  })
+})
+
+describe('CodeBuddy credit package summary', () => {
+  it('summarizes every package instead of cutting the list at four', () => {
+    const packages = Array.from({ length: 7 }, (_, index) => ({
+      name: `包 ${index + 1}`,
+      total: 100,
+      used: 10,
+      end: NOW + (index + 1) * 86_400_000,
+    }))
+    // The card used to render at most four packages without saying so; the
+    // collapsed row now carries the true count and combined total.
+    expect(client.packageSummary(packages)).toEqual({
+      count: 7,
+      total: 700,
+      nearest: NOW + 86_400_000,
+    })
+  })
+
+  it('ignores the never-expiring sentinel and falls back to the used figure', () => {
+    const summary = client.packageSummary([
+      { name: '永久', total: 50, end: 253_402_300_799_000 },
+      { name: '按量', used: 25 },
+    ])
+    expect(summary.count).toBe(2)
+    expect(summary.total).toBe(75)
+    // Year 9999 is the endpoint's "no expiry"; it must not read as nearest.
+    expect(summary.nearest).toBeUndefined()
+  })
+
+  it('treats a missing package list as empty', () => {
+    expect(client.packageSummary(undefined)).toEqual({ count: 0, total: 0, nearest: undefined })
   })
 })

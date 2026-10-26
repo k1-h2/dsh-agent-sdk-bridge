@@ -145,6 +145,9 @@ window.__ModuleLoader__.load({
       codebuddyQuotaTitle: '积分额度',
       codebuddyQuotaPackages: '积分包',
       codebuddyQuotaExpires: '最近到期',
+      codebuddyQuotaPackUsage: '已用 / 总额',
+      codebuddyQuotaPackDetail: '详细信息',
+      codebuddyQuotaPackCollapse: '收起',
       codebuddyConfirmLogout: '确定要退出当前区域的 CodeBuddy 登录吗？',
       minimaxNav: 'MiniMax Code',
       minimaxTitle: 'MiniMax Code',
@@ -330,6 +333,9 @@ window.__ModuleLoader__.load({
       codebuddyQuotaTitle: 'Credits',
       codebuddyQuotaPackages: 'Credit packages',
       codebuddyQuotaExpires: 'Earliest expiry',
+      codebuddyQuotaPackUsage: 'used / total',
+      codebuddyQuotaPackDetail: 'Details',
+      codebuddyQuotaPackCollapse: 'Collapse',
       codebuddyConfirmLogout: 'Sign out of CodeBuddy for the selected region?',
       minimaxNav: 'MiniMax Code',
       minimaxTitle: 'MiniMax Code',
@@ -561,6 +567,16 @@ window.__ModuleLoader__.load({
       usageValue: { fontWeight: 500 },
       link: { color: 'var(--dsw-alias-brand-primary, #4c6ef5)', textDecoration: 'none', fontSize: '0.86em' },
       usageFoot: { display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', fontSize: '0.8em', opacity: 0.6 },
+      packBlock: { display: 'flex', flexDirection: 'column', gap: '6px' },
+      packHead: { display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', fontSize: '0.86em' },
+      packToggle: { marginLeft: 'auto', background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: '0.8em', color: 'var(--dsw-alias-brand-primary, #4c6ef5)', cursor: 'pointer' },
+      packList: { display: 'flex', flexDirection: 'column', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', overflow: 'hidden' },
+      packListScroll: { maxHeight: '190px', overflowY: 'auto' },
+      packRow: { display: 'grid', gridTemplateColumns: 'minmax(90px, 1.5fr) auto auto', alignItems: 'baseline', gap: '10px', padding: '6px 10px', borderTop: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.15))', fontSize: '0.82em' },
+      packFirst: { borderTop: 'none' },
+      packLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      packAmount: { fontFamily: 'ui-monospace, monospace', textAlign: 'right', whiteSpace: 'nowrap' },
+      packExpiry: { opacity: 0.6, whiteSpace: 'nowrap', fontSize: '0.92em' },
       optionRow: { display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderTop: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.15))' },
       optionFirst: { borderTop: 'none', paddingTop: 0 },
       optionText: { flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' },
@@ -704,6 +720,29 @@ window.__ModuleLoader__.load({
     /** A short local date for an epoch-millisecond value. */
     function dateLabel(ms) {
       try { return new Date(ms).toLocaleDateString('zh-CN') } catch { return String(ms) }
+    }
+
+    /**
+     * The collapsed-row figures for a set of credit packages.
+     *
+     * A region can carry a dozen packages, so the card shows one summary row
+     * (count, combined total, nearest expiry) and lists them only when asked.
+     * `nearest` skips the endpoint's "never expires" sentinel: printing year
+     * 9999 as the earliest expiry is noise, and the same rule already
+     * suppresses it on the footer.
+     */
+    function packageSummary(packages) {
+      const list = Array.isArray(packages) ? packages : []
+      let total = 0
+      for (const pkg of list) {
+        if (typeof pkg?.total === 'number' && Number.isFinite(pkg.total)) total += pkg.total
+        else if (typeof pkg?.used === 'number' && Number.isFinite(pkg.used)) total += pkg.used
+      }
+      const nearest = list
+        .map(pkg => pkg?.end)
+        .filter(value => !neverExpires(value))
+        .sort((a, b) => a - b)[0]
+      return { count: list.length, total, nearest }
     }
 
     /**
@@ -894,6 +933,9 @@ window.__ModuleLoader__.load({
       const [account, setAccount] = useState(initial?.account)
       const [error, setError] = useState(undefined)
       const [busy, setBusy] = useState(false)
+      // Credit packages default to one summary row; the per-package list only
+      // opens on request, inside a bounded scroll area.
+      const [packsExpanded, setPacksExpanded] = useState(false)
       const lastRunning = useRef(false)
       const signingIn = auth?.running === true
       const accountFields = account?.account ?? {}
@@ -964,6 +1006,7 @@ window.__ModuleLoader__.load({
         setRegionState(configuredRegion)
         regionRef.current = configuredRegion
         applySnapshot(configuredRegion)
+        setPacksExpanded(false)
       }, [configuredRegion, applySnapshot])
 
       useEffect(() => {
@@ -981,6 +1024,7 @@ window.__ModuleLoader__.load({
         lastRunning.current = false
         setRegionState(next)
         applySnapshot(next)
+        setPacksExpanded(false)
         setError(undefined)
         onRegionChange?.(next)
         void (async () => {
@@ -1065,8 +1109,10 @@ window.__ModuleLoader__.load({
       const quotaPct = quota !== undefined && quota.total > 0
         ? Math.max(0, Math.min(100, (quota.used / quota.total) * 100))
         : undefined
+      // Every package is kept: the collapsed row carries the count and the
+      // combined total, so nothing disappears behind an invisible cut.
       const packages = Array.isArray(quota?.packages)
-        ? [...quota.packages].sort((a, b) => (a.end ?? Number.MAX_SAFE_INTEGER) - (b.end ?? Number.MAX_SAFE_INTEGER)).slice(0, 4)
+        ? [...quota.packages].sort((a, b) => (a.end ?? Number.MAX_SAFE_INTEGER) - (b.end ?? Number.MAX_SAFE_INTEGER))
         : []
       // The website's own usage page, under the profile the CLI login belongs
       // to. Both regions serve it at the same path.
@@ -1126,14 +1172,40 @@ window.__ModuleLoader__.load({
                   quotaPct === undefined ? null : h('div', { style: css.progressOuter },
                     h('div', { style: { ...css.progressInner, width: `${quotaPct}%` } }),
                   ),
-                  packages.length === 0 ? null : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-                    h('div', { style: css.note }, t('codebuddyQuotaPackages')),
-                    packages.map((pkg, index) => h('div', { key: `${pkg.name}-${index}`, style: css.usageLine },
-                      h('span', { style: { ...css.usageLabel, minWidth: '160px' } }, pkg.name || '—'),
-                      h('span', null, `${creditsOf(pkg.used)} / ${creditsOf(pkg.total)}`),
-                      pkg.end === undefined ? null : h('span', { style: { opacity: 0.55 } }, dateLabel(pkg.end)),
-                    )),
-                  ),
+                  packages.length === 0 ? null : (() => {
+                    // Same rule as the other adapters: collapsed is one summary
+                    // row (count, combined total, nearest expiry), expanded is
+                    // the per-package list.
+                    const summary = packageSummary(packages)
+                    return h('div', { style: css.packBlock },
+                      h('div', { style: css.packHead },
+                        h('span', { style: css.usageLabel }, `${t('codebuddyQuotaPackages')}（${summary.count}）`),
+                        h('span', { style: css.usageValue }, `${creditsOf(summary.total)} ${t('usageCredits')}`),
+                        summary.nearest === undefined ? null : h('span', { style: css.packExpiry }, `${t('codebuddyQuotaExpires')} ${dateLabel(summary.nearest)}`),
+                        h('button', {
+                          style: css.packToggle,
+                          onClick: () => setPacksExpanded(value => !value),
+                        }, packsExpanded ? t('codebuddyQuotaPackCollapse') : `（${t('codebuddyQuotaPackDetail')}）`),
+                      ),
+                      packsExpanded
+                        ? h('div', { style: css.packBlock },
+                            h('div', { style: css.packHead },
+                              h('span', { style: css.usageLabel }, t('codebuddyQuotaPackUsage')),
+                            ),
+                            h('div', { style: { ...css.packList, ...css.packListScroll } },
+                              packages.map((pkg, index) => h('div', {
+                                key: `${pkg.name}-${index}`,
+                                style: { ...css.packRow, ...(index === 0 ? css.packFirst : {}) },
+                              },
+                                h('span', { style: css.packLabel, title: pkg.name || '—' }, pkg.name || '—'),
+                                h('span', { style: css.packAmount }, `${creditsOf(pkg.used)} / ${creditsOf(pkg.total)}`),
+                                h('span', { style: css.packExpiry }, pkg.end === undefined ? '' : dateLabel(pkg.end)),
+                              )),
+                            ),
+                          )
+                        : null,
+                    )
+                  })(),
                   h('div', { style: css.usageFoot },
                     quota.cycleEnd === undefined ? null : h('span', null, `${t('codebuddyQuotaExpires')} ${dateLabel(quota.cycleEnd)}`),
                     usageLink,
@@ -2429,7 +2501,7 @@ window.__ModuleLoader__.load({
     exports.__test = {
       windowLabel, priceSuffix, ADVANCED, BRANDS, zh, en,
       SettingsPage, BundleSettings, UsageCard, CodeBuddyCard, QuotaLine, creditsOf, neverExpires,
-      dateLabel, tokenExpiryText,
+      dateLabel, tokenExpiryText, packageSummary,
       readCache, writeCache,
     }
     return module.exports
