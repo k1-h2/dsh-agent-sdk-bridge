@@ -13,7 +13,7 @@
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { foreignCliOverride, qoderCliOptions, resolveQoderCli, type CliLookup } from '../src/cli.ts'
-import { cliContextWindow } from '../src/adapter.ts'
+import { cliContextWindow, resolveDeclaredWindow } from '../src/adapter.ts'
 import { isImageAttachFailure } from '../src/session.ts'
 
 const EXE = process.platform === 'win32' ? '.exe' : ''
@@ -272,5 +272,43 @@ describe('cli context window', () => {
     expect(cliContextWindow(withWindows(undefined, { defaultContextWindow: 200_000 }), 1_000_000)).toBe(200_000)
     expect(cliContextWindow(withWindows([200_000, 400_000]), 1_000_000)).toBe(400_000)
     expect(cliContextWindow(withWindows(undefined, { maxInputTokens: 180_000 }), 1_000_000)).toBe(180_000)
+  })
+})
+
+/**
+ * The window the plugin publishes. It is what the meter divides by and what
+ * the compaction engine budgets against, so it must not move by accident.
+ */
+describe('declared context window', () => {
+  const model = (available?: readonly number[], fallback: { defaultContextWindow?: number, maxInputTokens?: number } = {}) => ({
+    ...fallback,
+    ...available === undefined ? {} : { availableContextWindows: available },
+  })
+
+  it('honours an override the model advertises', () => {
+    expect(resolveDeclaredWindow(model([200_000, 400_000, 1_000_000], { defaultContextWindow: 200_000 }), 1_000_000, undefined, 200_000))
+      .toBe(1_000_000)
+  })
+
+  it('ignores an override the model does not advertise', () => {
+    // A 1M choice on a 200K-only route: the CLI keeps 200K, so publishing 1M
+    // would divide every reading by five.
+    expect(resolveDeclaredWindow(model([200_000], { defaultContextWindow: 200_000 }), 1_000_000, undefined, 200_000))
+      .toBe(200_000)
+  })
+
+  it('keeps the last live window when the catalog goes missing', () => {
+    // The reported Qoder jump: a transient catalog miss fell back to the static
+    // 200K after a 1M session. That changed the ring denominator and the
+    // compaction budget, so the next compaction ran at what looked like 10%.
+    expect(resolveDeclaredWindow(undefined, undefined, 1_000_000, 200_000)).toBe(1_000_000)
+    // A remembered effective window also beats a stale unsupported override.
+    expect(resolveDeclaredWindow(undefined, 1_000_000, 200_000, 200_000)).toBe(200_000)
+  })
+
+  it('uses the static default only before a route ever resolved', () => {
+    expect(resolveDeclaredWindow(undefined, undefined, undefined, 200_000)).toBe(200_000)
+    // The user's choice is still better than guessing when nothing is known.
+    expect(resolveDeclaredWindow(undefined, 1_000_000, undefined, 200_000)).toBe(1_000_000)
   })
 })

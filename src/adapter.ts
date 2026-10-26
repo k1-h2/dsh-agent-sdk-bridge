@@ -95,6 +95,13 @@ export const QODER_PROVIDER = 'qoder-cn'
 /** The international edition's route; a second adapter instance serves it. */
 export const QODER_INTL_PROVIDER = 'qoder-intl'
 
+/** The window facts one live catalog entry carries. */
+export type WindowFacts = {
+  maxInputTokens?: number
+  defaultContextWindow?: number
+  availableContextWindows?: readonly number[]
+}
+
 /**
  * Decide the context window to report for one live model.
  *
@@ -103,6 +110,8 @@ export const QODER_INTL_PROVIDER = 'qoder-intl'
  * actually runs with. `maxInputTokens` is NOT a substitute — it is the ceiling
  * for a single request and is often lower than the session window (e.g. 180 000
  * against a 200 000 session), so falling back to it would understate capacity.
+ * Callers that accept a user override should validate it against
+ * `availableContextWindows` first — see {@link resolveDeclaredWindow}.
  *
  * @param live - the live catalog entry, when the CLI answered.
  * @param override - the user's chosen window for this model, if any.
@@ -110,7 +119,7 @@ export const QODER_INTL_PROVIDER = 'qoder-intl'
  * @returns the window in tokens.
  */
 export function pickContextWindow(
-  live: { maxInputTokens?: number, defaultContextWindow?: number, availableContextWindows?: readonly number[] } | undefined,
+  live: WindowFacts | undefined,
   override: number | undefined,
   fallback: number,
 ): number {
@@ -144,14 +153,37 @@ function largestWindow(available: readonly number[] | undefined): number | undef
  * @param declared - the window this route publishes to the harness.
  * @returns the window the CLI runs with, or undefined when unknown.
  */
-export function cliContextWindow(
-  live: { maxInputTokens?: number, defaultContextWindow?: number, availableContextWindows?: readonly number[] } | undefined,
-  declared: number,
-): number | undefined {
+export function cliContextWindow(live: WindowFacts | undefined, declared: number): number | undefined {
   if (live === undefined) return undefined
   const available = live.availableContextWindows
   if (available !== undefined && available.includes(declared)) return declared
   return live.defaultContextWindow ?? largestWindow(available) ?? live.maxInputTokens
+}
+
+/**
+ * The window to publish for one route, which is also the one the CLI is told
+ * to run with.
+ *
+ * A live entry is authoritative: the user's override counts only when the
+ * model advertises it. The CLI silently ignores anything else (a 1M choice on
+ * a 200K-only route), and dividing by it would understate every reading
+ * fivefold. When the catalog is momentarily unavailable, the last successful
+ * answer is reused instead of the static 200K default — that fallback used to
+ * change the denominator, and the compaction budget, mid-session: a 1M
+ * conversation read 1M one turn and 200K the next, and then compacted at what
+ * looked like 10%.
+ */
+export function resolveDeclaredWindow(
+  live: WindowFacts | undefined,
+  override: number | undefined,
+  remembered: number | undefined,
+  fallback: number,
+): number {
+  if (live === undefined) return remembered ?? override ?? fallback
+  const available = live.availableContextWindows
+  const honored = override !== undefined
+    && (available === undefined || available.length === 0 || available.includes(override))
+  return pickContextWindow(live, honored ? override : undefined, remembered ?? fallback)
 }
 
 function modelInfo(provider: string, entry: { id: string, name: string, description?: string, isVl?: boolean }): LlmModelInfo {
@@ -246,6 +278,15 @@ export class QoderAdapter extends LlmAdapter {
    * hash probe instead of rebuilding a set per call, with no staleness.
    */
   private disabledCache: { source: readonly string[], set: ReadonlySet<string> } | undefined
+  /**
+   * The last window each route resolved to, plus what the model advertised.
+   *
+   * Reused only when a live entry is missing. Without it a failed refresh fell
+   * back to the static 200K, so a 1M session suddenly declared 200K: the ring
+   * denominator changed and the compaction engine budgeted against 200K,
+   * compacting a history that was still only ~10% of the real window.
+   */
+  private readonly knownWindows = new Map<string, { window: number, available?: readonly number[] }>()
 
   constructor(options: QoderAdapterOptions = {}) {
     super()
@@ -338,7 +379,11 @@ export class QoderAdapter extends LlmAdapter {
    * @returns live catalog entries in upstream order.
    */
   async describeCatalog(): Promise<Awaited<ReturnType<QoderModelCatalog['liveModels']>>> {
-    return this.catalog.liveModels()
+    const live = await this.catalog.liveModels()
+    // Seed the remembered windows here too, so the settings page's rows and
+    // the request path validate a stored choice against the same catalog.
+    for (const entry of live) this.declaredWindow(entry.value, entry)
+    return live
   }
 
   /** Forget the cached catalog; the next read asks the CLI again. */
@@ -375,9 +420,33 @@ export class QoderAdapter extends LlmAdapter {
     return [...this.disabledModels]
   }
 
-  /** The user's window for one model, or undefined when following upstream. */
+  /**
+   * The user's window for one model, when the provider accepts it.
+   *
+   * A stored choice the model does not advertise is not a real choice: the CLI
+   * ignores it and keeps its own window, so publishing it would only make the
+   * meter divide by a capacity the route never runs with. Until the catalog
+   * has answered once the choice is trusted (there is nothing to check yet).
+   */
   contextWindowFor(id: string): number | undefined {
-    return this.windowOverride(id)
+    const override = this.windowOverride(id)
+    if (override === undefined) return undefined
+    const target = resolveQoderModelId(id, this.modelAliases)
+    const available = this.knownWindows.get(target)?.available
+    if (available === undefined || available.length === 0) return override
+    return available.includes(override) ? override : undefined
+  }
+
+  /** The window this route publishes, remembering it for catalog misses. */
+  private declaredWindow(id: string, live: WindowFacts | undefined): number {
+    const window = resolveDeclaredWindow(
+      live,
+      this.windowOverride(id),
+      this.knownWindows.get(id)?.window,
+      DEFAULT_CONTEXT_WINDOW,
+    )
+    if (live !== undefined) this.knownWindows.set(id, { window, available: live.availableContextWindows })
+    return window
   }
 
   /** The stored per-model window map, for rewriting the field. */
@@ -425,11 +494,7 @@ export class QoderAdapter extends LlmAdapter {
           // then upstream's own session window. Reporting a window larger than
           // the session really runs with would push the auto-compaction
           // threshold past what the provider accepts.
-          contextWindow: pickContextWindow(
-            live,
-            this.windowOverride(target),
-            DEFAULT_CONTEXT_WINDOW,
-          ),
+          contextWindow: this.declaredWindow(target, live),
         },
         defaultMaxTokens: live.maxOutputTokens ?? this.defaultMaxTokens,
         ...reasoning === undefined ? {} : { reasoning },
@@ -446,7 +511,7 @@ export class QoderAdapter extends LlmAdapter {
         ? { provider, id: model, name: model, inputModalities: ['text' as const] }
         : { ...modelInfo(provider, configured), id: model },
       context: {
-        contextWindow: this.windowOverride(target) ?? DEFAULT_CONTEXT_WINDOW,
+        contextWindow: this.declaredWindow(target, undefined),
       },
       defaultMaxTokens: this.defaultMaxTokens,
       ...reasoning === undefined ? {} : { reasoning },

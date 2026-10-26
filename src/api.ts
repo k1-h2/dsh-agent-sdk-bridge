@@ -94,6 +94,9 @@ export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
       ...override === undefined ? {} : { override },
       ...priceFactor === undefined ? {} : { priceFactor },
       reasoning: entry.isReasoning !== false,
+      // One advertised window is a fixed window: the CLI ignores anything
+      // else, so the page should show the value instead of a dead selector.
+      contextWindowSelectable: (entry.availableContextWindows?.length ?? 0) > 1,
     }
   })
 }

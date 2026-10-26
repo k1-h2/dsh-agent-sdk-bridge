@@ -9,6 +9,17 @@
   没装时只有对应页面报错，插件照常加载。
 - **品牌隔离**：各 provider 的 CLI 查找、模型目录缓存、会话池、账户读取、模型开关全部按 brand
   分开。`QODERCLI_PATH` 若指向另一 Qoder 版本，对应版本会明确报错而不是借用那个 CLI 的账号。
+- **Qoder 的声明窗口必须稳定**：Qoder 的 `context_usage_ratio` 是「按 CLI 实际运行的窗口」算的，
+  而 DSH 又用适配器上报的 `contextWindow` 当分母。两者一变，环就会跳。实测目录里 `dfmodel`
+  等模型声明 `availableContextWindows: [200000, 400000, 1000000]`、默认 200000，用户选 1M 是
+  上游真支持的档位。旧代码在目录短暂读不到时退回静态 `DEFAULT_CONTEXT_WINDOW`（200000），
+  于是同一会话会在 1M 与 200K 之间翻转：分母变了，DSH 的压缩预算 `contextWindow - maxTokens
+  - headroom` 也一起从 800K 掉到约 102K，一个才 10% 的会话就被自动压缩（历史里 t18 在
+  99,747 token 时压缩、随后掉到 37,699，正是这种「小幅跳变」）。现在 `declaredWindow()` 记住
+  每个路由上一次成功解析的窗口与可选项，目录缺席时复用它而不是退回 200K；
+  `resolveDeclaredWindow()` 只在模型确实声明了该档位时才采用用户覆盖（`auto` 只声明
+  `[200000]`，存了 1M 也会被忽略），`/models` 对单档模型回传
+  `contextWindowSelectable: false`，页面显示「上游固定」。
 - **CodeBuddy**：`src/codebuddy.ts` 自成一体会话（`unstable_v2_createSession` + 流式消息），
   模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；登录走
   `unstable_v2_authenticate`，`global`/`cn` 分别映射为 SDK 的 `external`/`internal`。

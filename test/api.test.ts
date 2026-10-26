@@ -117,6 +117,9 @@ describe('settings API brand routing', () => {
       expect(r.status(), brand).toBe(200)
       expect(r.body().brand, brand).toBe(brand)
       expect(r.body().models[0].id, brand).toBe('model-1')
+      // This stub advertises a single window, so the page must not offer a
+      // selector the CLI would refuse.
+      expect(r.body().models[0].contextWindowSelectable, brand).toBe(false)
       // Empty-list guidance is per adapter; a populated list carries none.
       expect(r.body().notice, brand).toBeUndefined()
     }
