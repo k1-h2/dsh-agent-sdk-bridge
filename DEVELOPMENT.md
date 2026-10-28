@@ -45,6 +45,12 @@
   仍会丢弃任何非宿主前缀的 tool_use，防止模型臆造工具名。CodeBuddy 会把 MCP server 名里的
   非字母数字字符规范成 `_`（`dsh-host` → `mcp__dsh_host__<tool>`），Qoder CLI 保留连字符，
   因此 `isHostTool()` / `hostToolName()` 同时接受两种拼写。
+- **切换模型读缓存**：`resolveModel` 与 `capture()` 走 `cachedModels()`
+  （`src/model-cache.ts`）：有快照就先返回快照，刷新在后台跑；只有从未读到过目录时才等待。
+  三家的目录获取都很贵（Qoder 冷启动 CLI，最长等于 fetch 超时；CodeBuddy 要启进程；MiniMax
+  走 ACP 探测），而宿主在每次切模型、切思考档位时都会重新解析一次，所以以前 TTL 一过期就会
+  卡住菜单。三家 catalog 都新增了 `snapshot()`（只读内存，不发网络）供这里使用。
+  同步探测（`regionBlocked`、额度）不受影响，它们仍走各自的正常读取。
 - **CodeBuddy 模型选择按区域**：`codebuddyGlobalDisabledModels` /
   `codebuddyCnDisabledModels` 与 `codebuddyGlobalModelContextWindows` /
   `codebuddyCnModelContextWindows` 是四个独立字段，`CodeBuddyAdapter` 按 region 读取，

@@ -1527,6 +1527,16 @@ export class MinimaxCatalog {
     }
   }
 
+  /**
+   * The last successful list for a region, without probing.
+   *
+   * The picker resolves a route on every switch; awaiting an ACP probe there
+   * cost a process round-trip whenever the TTL had just expired.
+   */
+  snapshot(requested?: MinimaxRegion): readonly MinimaxModel[] | undefined {
+    return this.snapshots.get(requested ?? readLive(this.region, 'cn'))?.models
+  }
+
   /** Why the last refresh failed, or undefined when it succeeded. */
   error(requested?: MinimaxRegion): string | undefined {
     return this.failures.get(requested ?? readLive(this.region, 'cn'))

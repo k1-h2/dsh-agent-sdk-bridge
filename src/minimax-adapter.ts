@@ -25,6 +25,7 @@ import {
 import type { MinimaxModel, MinimaxPromptBlock, MinimaxUsageSnapshot } from './minimax.ts'
 import { resolveMinimaxCli } from './minimax-cli.ts'
 import { reasoningInfo, planContinuation } from './adapter.ts'
+import { cachedModels } from './model-cache.ts'
 import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
@@ -255,7 +256,9 @@ export class MinimaxAdapter extends LlmAdapter {
     const region = this.region
     const target = resolveMinimaxModelId(model, this.aliases)
     const key = `${region}:${target}`
-    const live = (await this.catalog.models(region)).find(entry => entry.id === target)
+    // Cache first: resolving a route may not wait on an ACP probe.
+    const live = (await cachedModels(this.catalog.snapshot(region), () => this.catalog.models(region)))
+      .find(entry => entry.id === target)
     if (live !== undefined) {
       this.knownVision.set(key, live.vision)
       const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, live.reasoning)

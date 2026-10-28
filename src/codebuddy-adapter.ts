@@ -18,6 +18,7 @@ import type { CodeBuddyRegion } from './brand.ts'
 import { codeBuddyColdStream, CodeBuddyAccountReader, CodeBuddyAuth, CodeBuddyCatalog, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './codebuddy.ts'
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './codebuddy.ts'
 import { reasoningInfo, planContinuation } from './adapter.ts'
+import { cachedModels } from './model-cache.ts'
 import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
@@ -199,7 +200,8 @@ export class CodeBuddyAdapter extends LlmAdapter {
   private async modelVision(model: string): Promise<boolean> {
     const target = resolveCodeBuddyModelId(model, this.aliases)
     const key = `${this.region}:${target}`
-    const live = (await this.catalog.models().catch(() => [])).find(entry => entry.id === target)
+    const live = (await cachedModels(this.catalog.snapshot(), () => this.catalog.models()))
+      .find(entry => entry.id === target)
     if (live !== undefined) {
       this.knownVision.set(key, live.vision)
       return live.vision
@@ -301,7 +303,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
 
   /** The catalog snapshot the adapter last read (empty before the first read). */
   private models(region: CodeBuddyRegion): readonly CodeBuddyModel[] {
-    return this.catalog.snapshot(region)
+    return this.catalog.snapshot(region) ?? []
   }
 
   /** Whether this model lets the user pick a context budget at all. */
@@ -321,7 +323,10 @@ export class CodeBuddyAdapter extends LlmAdapter {
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const target = resolveCodeBuddyModelId(model, this.aliases)
     const key = `${this.region}:${target}`
-    const live = (await this.catalog.models()).find(entry => entry.id === target)
+    // Cache first: a model switch must not wait on a catalogue fetch (which
+    // boots a CodeBuddy process) just because the TTL has expired.
+    const live = (await cachedModels(this.catalog.snapshot(), () => this.catalog.models()))
+      .find(entry => entry.id === target)
     if (live !== undefined) {
       this.knownVision.set(key, live.vision)
       const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, (live.reasoningEfforts?.length ?? 0) > 0)

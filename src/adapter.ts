@@ -23,6 +23,7 @@ import type { ResolvedConfig } from './config.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import { DEFAULT_MODEL_CACHE_TTL_MS, DEFAULT_FETCH_TIMEOUT_MS, QoderModelCatalog } from './models.ts'
+import { cachedModels } from './model-cache.ts'
 import { feedImageRefs, feedToText, imageRefText, imageRefs, joinFeeds, renderInitialFeed, renderRefreshed, renderUserTurn } from './render.ts'
 import type { Feed, ImagePathResolver } from './render.ts'
 import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
@@ -492,7 +493,12 @@ export class QoderAdapter extends LlmAdapter {
     // address to find the metadata, but echo the requested id back: the seam
     // rejects an exact-model result whose id differs from the one asked for.
     const target = resolveQoderModelId(model, this.modelAliases)
-    const live = (await this.catalog.liveModels()).find(entry => entry.value === target)
+    // The picker resolves on every switch and every level change. Awaiting the
+    // CLI catalogue here (a cold start, up to the fetch timeout) froze the menu
+    // whenever the cache had just expired, so a snapshot answers immediately and
+    // the refresh runs behind it.
+    const live = (await cachedModels(this.catalog.snapshot(), () => this.catalog.liveModels()))
+      .find(entry => entry.value === target)
     if (live !== undefined) {
       const vision = live.isVl === true
       this.knownVision.set(target, vision)
@@ -566,7 +572,10 @@ export class QoderAdapter extends LlmAdapter {
   private async capture(provider: string, model: string, signal?: AbortSignal): Promise<CallGeneration> {
     const info = await this.resolveModel(provider, model, signal)
     const target = resolveQoderModelId(model, this.modelAliases)
-    const live = (await this.catalog.liveModels()).find(entry => entry.value === target)
+    // Same cache-first rule as the resolution above: a dispatch may not stall
+    // on a catalogue fetch to learn window facts a snapshot already carries.
+    const live = (await cachedModels(this.catalog.snapshot(), () => this.catalog.liveModels()))
+      .find(entry => entry.value === target)
     const declared = info.context?.contextWindow
     return {
       info,

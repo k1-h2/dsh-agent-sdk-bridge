@@ -101,6 +101,20 @@ export class QoderModelCatalog {
     }
   }
 
+  /**
+   * The last successful live list, without fetching.
+   *
+   * The model picker resolves a route on every switch, and a switch must not
+   * wait on a CLI cold start (up to the fetch timeout). Callers that need an
+   * immediate answer read this and let {@link liveModels} refresh behind them;
+   * `undefined` means nothing has been read yet, which only the first switch
+   * has to wait for.
+   */
+  snapshot(): readonly ModelInfo[] | undefined {
+    const cached = this.cached ?? sharedSnapshots.get(this.brand)
+    return cached === undefined ? undefined : officialOnly(cached.models)
+  }
+
   /** Why the last refresh failed, or undefined when it succeeded. */
   get error(): string | undefined {
     return this.failure

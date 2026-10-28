@@ -345,6 +345,13 @@ export declare class MinimaxCatalog {
     constructor(region: Live<MinimaxRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>);
     /** Models for one region; a failed refresh keeps the last good list. */
     models(requested?: MinimaxRegion): Promise<readonly MinimaxModel[]>;
+    /**
+     * The last successful list for a region, without probing.
+     *
+     * The picker resolves a route on every switch; awaiting an ACP probe there
+     * cost a process round-trip whenever the TTL had just expired.
+     */
+    snapshot(requested?: MinimaxRegion): readonly MinimaxModel[] | undefined;
     /** Why the last refresh failed, or undefined when it succeeded. */
     error(requested?: MinimaxRegion): string | undefined;
     invalidate(region?: MinimaxRegion): void;

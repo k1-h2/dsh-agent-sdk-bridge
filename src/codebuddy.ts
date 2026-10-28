@@ -352,8 +352,8 @@ export class CodeBuddyCatalog {
    * Callers that must answer synchronously (deciding whether a model exposes a
    * context-budget choice) use this instead of awaiting a refresh.
    */
-  snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[] {
-    return this.snapshots.get(requested ?? readLive(this.region, 'global'))?.models ?? []
+  snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[] | undefined {
+    return this.snapshots.get(requested ?? readLive(this.region, 'global'))?.models
   }
 
   /** Models for one region; a failed refresh keeps the last good list. */

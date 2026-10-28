@@ -126,7 +126,7 @@ export declare class CodeBuddyCatalog {
      * Callers that must answer synchronously (deciding whether a model exposes a
      * context-budget choice) use this instead of awaiting a refresh.
      */
-    snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[];
+    snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[] | undefined;
     /** Models for one region; a failed refresh keeps the last good list. */
     models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]>;
     /** Why the last refresh failed, or undefined when it succeeded. */
