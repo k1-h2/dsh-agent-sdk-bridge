@@ -41,8 +41,8 @@ export declare function readLive<T>(value: Live<T> | undefined, fallback: T): T;
  * Resolve one {@link Live} option that may legitimately be undefined.
  *
  * Separate from {@link readLive} because an option whose "unset" state is
- * itself meaningful (`defaultReasoningEffort`: empty means "follow upstream")
- * has no fallback to apply.
+ * itself meaningful (`defaultReasoningEffort`: empty means "use the model's
+ * strongest level") has no fallback to apply.
  *
  * @param value - the plain value or thunk, possibly undefined.
  * @returns the option's current value, or undefined when it is unset.

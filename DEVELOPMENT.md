@@ -51,6 +51,13 @@
   走 ACP 探测），而宿主在每次切模型、切思考档位时都会重新解析一次，所以以前 TTL 一过期就会
   卡住菜单。三家 catalog 都新增了 `snapshot()`（只读内存，不发网络）供这里使用。
   同步探测（`regionBlocked`、额度）不受影响，它们仍走各自的正常读取。
+- **默认思考档位取最强的一档**：`reasoningInfo()` 的第二个参数是**用户配置**的档位，不再是上游
+  声明的 `defaultEffort`；留空时由 `strongestEffort()` 按 `none < minimal < low < medium <
+  high < xhigh < max` 取该模型支持的最强档（三家词表不同：Qoder `low|medium|high|max`、
+  MiniMax `low|high`、CodeBuddy 由目录声明）。宿主在请求未带档位时会应用我们声明的
+  `defaultEffort`（`requested ?? reasoning.defaultEffort`），所以这里选什么，实际就跑什么；
+  上游自己的默认值会偏低（CodeBuddy 的 `high` 在可选 `max` 时就不再直接采用）。配置的档位若
+  模型不支持，会退回最强档，而不是把这一轮判成 `UNSUPPORTED_REASONING_EFFORT`。
 - **CodeBuddy 模型选择按区域**：`codebuddyGlobalDisabledModels` /
   `codebuddyCnDisabledModels` 与 `codebuddyGlobalModelContextWindows` /
   `codebuddyCnModelContextWindows` 是四个独立字段，`CodeBuddyAdapter` 按 region 读取，

@@ -261,7 +261,7 @@ export class MinimaxAdapter extends LlmAdapter {
       .find(entry => entry.id === target)
     if (live !== undefined) {
       this.knownVision.set(key, live.vision)
-      const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, live.reasoning)
+      const reasoning = reasoningInfo(live.reasoningEfforts, readLiveOptional(this.options.defaultReasoningEffort), live.reasoning)
       return {
         provider,
         id: model,

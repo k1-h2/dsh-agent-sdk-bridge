@@ -247,7 +247,7 @@ export const Config = z.object({
   maxSessions: z.number().step(1).min(1).max(64).default(8).description('同时保持的内层会话数上限，超出后按最久未使用关闭。每个会话是一个子进程。').volatile(),
   modelCacheTtlSeconds: z.number().step(1).min(10).max(86_400).default(300).description('模型列表缓存时长（秒）。调小可更快看到账号侧变化。').volatile(),
   modelAliases: z.dict(z.string()).default({}).description('额外的模型别名映射：DSH 侧名称 → Qoder 模型 ID。内置 deepseek-v4-* 别名仍然生效。').volatile(),
-  defaultReasoningEffort: z.string().default('').description('请求未指定思考档位时使用的默认档位；留空则用上游默认。').volatile(),
+  defaultReasoningEffort: z.string().default('').description('默认选用的思考档位；留空则用该模型支持的最强档位。').volatile(),
   defaultMaxTokens: z.number().step(1).min(1).default(32_000).description('模型未声明输出上限时使用的输出上限。').volatile(),
   toolResultTimeoutSeconds: z.number().step(1).min(5).max(3_600).default(120).description('仅用于未配对 handler 的兜底时限（秒）：正常工具调用会等宿主下一次请求携带结果，不按此超时。').volatile(),
   catalogFetchTimeoutSeconds: z.number().step(1).min(1).max(300).default(20).description('拉取模型列表的时限（秒），超时后回退到内置列表。').volatile(),

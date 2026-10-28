@@ -132,14 +132,33 @@ export declare function cliContextWindow(live: WindowFacts | undefined, declared
  */
 export declare function resolveDeclaredWindow(live: WindowFacts | undefined, override: number | undefined, remembered: number | undefined, fallback: number): number;
 /**
+ * The strongest level a model offers.
+ *
+ * Switching model or level must start at the most capable setting the route
+ * accepts, the same rule the sibling adapter plugin uses; the previous
+ * behaviour of following upstream's own default meant some models silently
+ * started one or two steps down (`CodeBuddy` advertises `high` as its default
+ * even when `max` is selectable).
+ *
+ * @param efforts - the levels the route accepts, in upstream order.
+ * @returns the strongest id, or undefined for a non-reasoning model.
+ */
+export declare function strongestEffort(efforts: readonly string[]): string | undefined;
+/**
  * Build the `reasoning` metadata block for a resolved model, or undefined
  * when the model does not support reasoning.
+ *
+ * The starting level is the strongest one the model accepts, not the level
+ * upstream happens to name as its default: the user's explicit choice in the
+ * sibling plugin, applied here too. An explicit configuration value still wins
+ * when the model accepts it.
+ *
  * @param efforts - CLI-reported effort ids (absent for reasoning-less models).
- * @param defaultEffort - CLI-reported default effort id.
+ * @param configuredEffort - user-configured starting level, when any.
  * @param isReasoning - whether the model supports reasoning per the CLI.
  * @returns the harness reasoning metadata, or undefined to omit it.
  */
-export declare function reasoningInfo(efforts: readonly string[] | undefined, defaultEffort: string | undefined, isReasoning: boolean | undefined): LlmModelReasoningInfo | undefined;
+export declare function reasoningInfo(efforts: readonly string[] | undefined, configuredEffort: string | undefined, isReasoning: boolean | undefined): LlmModelReasoningInfo | undefined;
 /**
  * The Qoder-backed adapter. Session continuity, tool parking, and feed
  * planning live here; chunk synthesis lives in the session's consumer.

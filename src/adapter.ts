@@ -218,30 +218,76 @@ const EFFORT_NAMES: Readonly<Record<string, string>> = {
 }
 
 /**
+ * Strength order used to pick a model's starting level.
+ *
+ * The three providers spell their levels differently (Qoder publishes
+ * `low|medium|high|max`, MiniMax `low|high`, CodeBuddy whatever its catalog
+ * declares), so the ranking is by name rather than by position in any one
+ * upstream list. An id outside this table ranks below every known one, which is
+ * what several sources agreeing on an unfamiliar spelling should do.
+ */
+const EFFORT_ORDER: readonly string[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/**
+ * The strongest level a model offers.
+ *
+ * Switching model or level must start at the most capable setting the route
+ * accepts, the same rule the sibling adapter plugin uses; the previous
+ * behaviour of following upstream's own default meant some models silently
+ * started one or two steps down (`CodeBuddy` advertises `high` as its default
+ * even when `max` is selectable).
+ *
+ * @param efforts - the levels the route accepts, in upstream order.
+ * @returns the strongest id, or undefined for a non-reasoning model.
+ */
+export function strongestEffort(efforts: readonly string[]): string | undefined {
+  if (efforts.length === 0) return undefined
+  let best: string | undefined
+  let bestRank = -1
+  for (const effort of efforts) {
+    // First occurrence wins a tie, which keeps an upstream-ordered list stable
+    // when it repeats a level.
+    const rank = EFFORT_ORDER.indexOf(effort)
+    if (best === undefined || rank > bestRank) {
+      best = effort
+      bestRank = rank
+    }
+  }
+  return best
+}
+
+/**
  * Build the `reasoning` metadata block for a resolved model, or undefined
  * when the model does not support reasoning.
+ *
+ * The starting level is the strongest one the model accepts, not the level
+ * upstream happens to name as its default: the user's explicit choice in the
+ * sibling plugin, applied here too. An explicit configuration value still wins
+ * when the model accepts it.
+ *
  * @param efforts - CLI-reported effort ids (absent for reasoning-less models).
- * @param defaultEffort - CLI-reported default effort id.
+ * @param configuredEffort - user-configured starting level, when any.
  * @param isReasoning - whether the model supports reasoning per the CLI.
  * @returns the harness reasoning metadata, or undefined to omit it.
  */
 export function reasoningInfo(
   efforts: readonly string[] | undefined,
-  defaultEffort: string | undefined,
+  configuredEffort: string | undefined,
   isReasoning: boolean | undefined,
 ): LlmModelReasoningInfo | undefined {
   if (efforts === undefined && isReasoning === false) return undefined
   const ids = efforts !== undefined && efforts.length > 0
     ? efforts
     : DEFAULT_REASONING_EFFORTS
+  const defaultEffort = configuredEffort !== undefined && ids.includes(configuredEffort)
+    ? configuredEffort
+    : strongestEffort(ids)
   return {
     efforts: ids.map(id => ({
       id: ReasoningEffortId(id),
       name: EFFORT_NAMES[id] ?? id,
     })),
-    ...defaultEffort !== undefined && ids.includes(defaultEffort)
-      ? { defaultEffort: ReasoningEffortId(defaultEffort) }
-      : {},
+    ...defaultEffort === undefined ? {} : { defaultEffort: ReasoningEffortId(defaultEffort) },
   }
 }
 
@@ -502,7 +548,7 @@ export class QoderAdapter extends LlmAdapter {
     if (live !== undefined) {
       const vision = live.isVl === true
       this.knownVision.set(target, vision)
-      const reasoning = reasoningInfo(live.efforts, live.defaultEffort ?? this.defaultReasoningEffort, live.isReasoning)
+      const reasoning = reasoningInfo(live.efforts, this.defaultReasoningEffort, live.isReasoning)
       return {
         provider,
         id: model,

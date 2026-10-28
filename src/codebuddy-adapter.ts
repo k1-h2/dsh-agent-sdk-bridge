@@ -329,7 +329,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
       .find(entry => entry.id === target)
     if (live !== undefined) {
       this.knownVision.set(key, live.vision)
-      const reasoning = reasoningInfo(live.reasoningEfforts, live.defaultEffort, (live.reasoningEfforts?.length ?? 0) > 0)
+      const reasoning = reasoningInfo(live.reasoningEfforts, readLiveOptional(this.options.defaultReasoningEffort), (live.reasoningEfforts?.length ?? 0) > 0)
       return {
         provider,
         id: model,
