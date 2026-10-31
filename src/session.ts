@@ -16,15 +16,15 @@ import {
 import type {
   ContentBlock, FinishReason, GenerateOptions, RequestMessage, StreamChunk, ToolSchema, TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import { createSdkMcpServer, qodercliAuth } from '@qodercn-ai/qodercn-agent-sdk'
+import { createSdkMcpServer } from '@qodercn-ai/qodercn-agent-sdk'
 import type { CanUseTool, Query } from '@qodercn-ai/qodercn-agent-sdk'
 import type { QoderBrand } from './brand.ts'
-import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from './cli.ts'
 import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from './render.ts'
-import { loadSdk } from './sdk.ts'
+import { isDaemonConflict, loadSdk, probeDaemon, resetSdk } from './sdk.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
 
 /** MCP server name this adapter exposes host tools under. */
@@ -830,6 +830,20 @@ export class QoderSession {
     // account's CLI. See `cli.ts`.
     const conflict = foreignCliOverride(this.brand)
     if (conflict !== undefined) throw new Error(cliConflictMessage(this.brand))
+    // No CLI of our own: do not let the SDK initialize its daemon from nothing,
+    // or the first query after the CLI is installed conflicts with it (see
+    // `sdk.ts`).
+    if (resolveQoderCli(this.brand) === undefined) throw new Error(cliConflictMessage(this.brand))
+    // A turn that has started streaming cannot be retried, so make the daemon
+    // prove it accepts the current configuration first. A failure here is not
+    // fatal by itself (the account may simply be signed out); only the
+    // configuration conflict matters, and it is answered by dropping the SDK
+    // instance so the query below is built on a fresh daemon.
+    try {
+      await probeDaemon(this.brand)
+    } catch (error) {
+      if (isDaemonConflict(error)) resetSdk(this.brand)
+    }
     // The SDK is brand-specific: the CN module speaks to qoderclicn and the
     // international one to qodercli, each against its own credentials.
     const sdk = await loadSdk(this.brand)
@@ -840,7 +854,7 @@ export class QoderSession {
         // this process that thread's sharp fights the host's own over the
         // libvips DLL every image needs. See `cli.ts`.
         ...qoderCliOptions(this.brand),
-        auth: qodercliAuth(),
+        auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],
         canUseTool: this.canUseTool as CanUseTool,
@@ -1220,6 +1234,15 @@ export class QoderSession {
       }
       this.endTurn({ kind: 'error', failure: { message: 'qoder session stream ended unexpectedly', code: 'STREAM_CLOSED' } })
     } catch (error) {
+      // The SDK's daemon refuses a configuration that changed after it started.
+      // That poisons the whole module instance, so every later query would fail
+      // the same way; dropping it here lets the next turn start a fresh daemon
+      // instead of inheriting the broken one.
+      if (isDaemonConflict(error)) {
+        resetSdk(this.brand)
+        this.q = null
+        void q.close().catch(() => undefined)
+      }
       this.endTurn({ kind: 'error', failure: { message: `qoder session died: ${cliFailureText(String(error), this.brand)}`, code: 'TRANSPORT' } })
     }
   }
@@ -1526,12 +1549,13 @@ export class QoderSessionManager {
     const brand = this.runtime.brand ?? 'cn'
     const conflict = foreignCliOverride(brand)
     if (conflict !== undefined) throw new Error(cliConflictMessage(brand))
+    if (resolveQoderCli(brand) === undefined) throw new Error(cliConflictMessage(brand))
     const sdk = await loadSdk(brand)
     const q = sdk.query({
       prompt,
       options: {
         ...qoderCliOptions(brand),
-        auth: qodercliAuth(),
+        auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],
         canUseTool: gateTools as CanUseTool,
@@ -1565,7 +1589,12 @@ export class QoderSessionManager {
         // Abandoning this loop on a host abort runs the iterator's return(),
         // whose close chain rejects once the child process is already gone;
         // that is the abort, not a transport failure.
-        if (signal?.aborted !== true) throw error
+        if (signal?.aborted !== true) {
+          // Same poisoning as the warm path: drop the instance so the next
+          // request starts a daemon that matches the current configuration.
+          if (isDaemonConflict(error)) resetSdk(brand)
+          throw error
+        }
       }
       if (signal?.aborted === true) {
         yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'aborted by host', code: 'ABORTED' } } }

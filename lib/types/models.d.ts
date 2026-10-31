@@ -67,6 +67,7 @@ export declare class QoderModelCatalog {
     /** dsh catalog entries: the enabled live list, or the static fallback. */
     models(): Promise<readonly QoderCatalogModel[]>;
     private fetch;
+    private read;
 }
 /**
  * The credit multiplier upstream quotes for one model.

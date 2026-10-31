@@ -245,6 +245,17 @@ export function cliConflictMessage(brand: QoderBrand): string {
  * @returns the original detail, prefixed with the actionable explanation.
  */
 export function cliFailureText(detail: string, brand: QoderBrand): string {
+  // The SDK routes every query through one process-wide daemon pinned to the
+  // first launch configuration it saw. When the machine changes under it (a
+  // reinstall, a new edition, a different environment) every query is rejected
+  // with this message until the process restarts. The plugin now drops the SDK
+  // instance at that point, so the next request recovers; say that instead of
+  // echoing an English internal error into the page.
+  if (/DaemonConfigurationConflict|Global daemon is already initialized with different options/i.test(detail)) {
+    const command = brandProfile(brand).cliCommands[0]
+    return `本机 ${command} 的运行配置在本次会话期间发生了变化，SDK 的本地守护进程仍按旧配置运行。`
+      + `插件已重置这部分运行时，请重试一次；若仍失败，重启 DSH Web。原始信息：${detail}`
+  }
   if (!/exit(?:ed)?(?: with)? code 42|sdk_worker_removed/i.test(detail)) return detail
   const profile = brandProfile(brand)
   const pkg = profile.cliPackages[0]

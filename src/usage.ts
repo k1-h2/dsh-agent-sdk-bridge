@@ -22,7 +22,8 @@ import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions
 import { withTimeout } from './models.ts'
 import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
-import { loadSdk } from './sdk.ts'
+import type { QoderSdkModule } from './sdk.ts'
+import { withSdk } from './sdk.ts'
 
 /** How long one quota reading stays fresh by default. */
 export const DEFAULT_USAGE_CACHE_TTL_MS = 60_000
@@ -117,32 +118,7 @@ export class QoderUsage {
       if (conflict !== undefined) {
         return { at, cliMissing: true, error: cliConflictMessage(this.brand) }
       }
-      const sdk = await loadSdk(this.brand)
-      const timeoutMs = readLive(this.timeoutMs, DEFAULT_USAGE_TIMEOUT_MS)
-      const q = sdk.query({
-        prompt: inertInput(),
-        options: {
-          ...qoderCliOptions(this.brand),
-          auth: sdk.qodercliAuth(),
-          tools: [],
-          allowedTools: [],
-          settingSources: [],
-          maxTurns: 1,
-        },
-      })
-      try {
-        const usage = await withTimeout(q.getUsageInfo(), timeoutMs)
-        // Account identity is secondary: a CLI that predates the control request
-        // still delivers the quota, and the card simply omits the account line.
-        const account = await withTimeout(q.accountInfo(), timeoutMs).catch(() => undefined)
-        return {
-          at,
-          ...usage === null || usage === undefined ? { error: 'CLI 未返回额度信息' } : { usage },
-          ...account === undefined ? {} : { account },
-        }
-      } finally {
-        await q.close().catch(() => undefined)
-      }
+      return await withSdk(this.brand, sdk => this.readSnapshot(sdk, at))
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       // The quota card is the first thing a user sees on a machine without the
@@ -153,6 +129,34 @@ export class QoderUsage {
         at,
         error: missingCli ? `未检测到可用的 ${command}，请先安装并登录后再读取额度。` : cliFailureText(detail, this.brand),
       }
+    }
+  }
+
+  private async readSnapshot(sdk: QoderSdkModule, at: number): Promise<UsageSnapshot> {
+    const timeoutMs = readLive(this.timeoutMs, DEFAULT_USAGE_TIMEOUT_MS)
+    const q = sdk.query({
+      prompt: inertInput(),
+      options: {
+        ...qoderCliOptions(this.brand),
+        auth: sdk.qodercliAuth(),
+        tools: [],
+        allowedTools: [],
+        settingSources: [],
+        maxTurns: 1,
+      },
+    })
+    try {
+      const usage = await withTimeout(q.getUsageInfo(), timeoutMs)
+      // Account identity is secondary: a CLI that predates the control request
+      // still delivers the quota, and the card simply omits the account line.
+      const account = await withTimeout(q.accountInfo(), timeoutMs).catch(() => undefined)
+      return {
+        at,
+        ...usage === null || usage === undefined ? { error: 'CLI 未返回额度信息' } : { usage },
+        ...account === undefined ? {} : { account },
+      }
+    } finally {
+      await q.close().catch(() => undefined)
     }
   }
 }

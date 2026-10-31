@@ -67,4 +67,5 @@ export declare class QoderUsage {
     /** The reading for a machine whose CLI is not installed. */
     private missingCli;
     private fetch;
+    private readSnapshot;
 }

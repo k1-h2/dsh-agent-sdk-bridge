@@ -17,10 +17,11 @@ import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
 import type { QoderCatalogModel } from './catalog.ts'
 import { QODER_MODELS } from './catalog.ts'
-import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from './cli.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
-import { loadSdk } from './sdk.ts'
+import type { QoderSdkModule } from './sdk.ts'
+import { withSdk } from './sdk.ts'
 
 /** How long a fetched catalog stays fresh by default. */
 export const DEFAULT_MODEL_CACHE_TTL_MS = 5 * 60_000
@@ -152,7 +153,15 @@ export class QoderModelCatalog {
   private async fetch(): Promise<readonly ModelInfo[]> {
     const conflict = foreignCliOverride(this.brand)
     if (conflict !== undefined) throw new Error(cliConflictMessage(this.brand))
-    const sdk = await loadSdk(this.brand)
+    // Without a CLI of our own there is no configuration to initialize the
+    // SDK's daemon with. Asking anyway pinned it to the SDK's defaults, and the
+    // first query after the CLI was installed then conflicted with it for the
+    // rest of the process's life (see `sdk.ts`).
+    if (resolveQoderCli(this.brand) === undefined) throw new Error(cliConflictMessage(this.brand))
+    return withSdk(this.brand, sdk => this.read(sdk))
+  }
+
+  private async read(sdk: QoderSdkModule): Promise<readonly ModelInfo[]> {
     const q = sdk.query({
       prompt: inertInput(),
       options: {
