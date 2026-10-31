@@ -90,17 +90,38 @@ export declare function qoderCliOptions(brand?: QoderBrand, lookup?: CliLookup):
  */
 export declare function isForeignCliPath(brand: QoderBrand, candidate: string): boolean;
 /**
- * A `QODERCLI_PATH` that names the other edition, when this one has no CLI.
+ * Why this edition has no usable CLI, when `QODERCLI_PATH` explains it.
  *
- * The SDKs read that variable from the parent process before any option this
- * plugin can pass, so when it is foreign and this edition has nothing of its
- * own, the only honest answer is a configuration error — spawning the other
- * edition's CLI would answer with the other edition's account.
+ * `QODERCLI_PATH` predates the international edition and some installers
+ * export it machine-wide. Both SDKs read it from the parent process before any
+ * option this plugin can pass, so a value naming the *other* edition would
+ * hand this edition's session the other account. The lookup therefore never
+ * offers it ({@link isForeignCliPath}), and this reports the case where it is
+ * all the machine has, so the page can ask for the right CLI to be installed.
+ *
+ * This is a diagnosis, not a second rule: an edition that finds its own CLI is
+ * unaffected by the variable. That is what keeps one edition's install from
+ * blocking the other's sign-in — the earlier code treated any foreign value as
+ * fatal, so a machine that had only the intl CLI installed could not sign in
+ * to CN even after installing it if the lookup missed the new package.
  *
  * @param brand - the edition the caller is about to start.
  * @param lookup - the machine to inspect; defaults to this process's.
+ * @returns the foreign override when this edition has nothing of its own.
  */
 export declare function foreignCliOverride(brand: QoderBrand, lookup?: CliLookup): string | undefined;
+/**
+ * The environment one session's child process receives.
+ *
+ * `QODERCLI_PATH` is stripped when it names the other edition: both SDKs read
+ * it from the parent before honouring any option, so leaving it in place would
+ * hand the intl session the CN CLI (and the CN account). Every other variable
+ * is inherited untouched — the CLI keeps its state in `PATH`-relative dirs.
+ *
+ * @param brand - which edition's child is being started.
+ * @param env - the environment to derive from; defaults to this process's.
+ */
+export declare function cliChildEnv(brand: QoderBrand, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 /**
  * The error text for {@link foreignCliOverride}.
  *
@@ -109,3 +130,42 @@ export declare function foreignCliOverride(brand: QoderBrand, lookup?: CliLookup
  * plugin's environment plumbing. The technical reason stays in the lookup.
  */
 export declare function cliConflictMessage(brand: QoderBrand): string;
+/**
+ * Turn a CLI failure into something a user can act on.
+ *
+ * The SDK reports an outdated CLI as `Qoder CLI process exited with code 42`,
+ * which says nothing about the cause: CLI 1.1.81 removed the worker-session
+ * handshake the older SDK spoke, and its own log says so
+ * (`sdk_worker_removed: … Upgrade to the latest Qoder SDK version, or roll back
+ * the CLI`). The only fix available to a user is reinstalling the pair through
+ * the bundled helper, so say that instead of echoing the number.
+ *
+ * @param detail - the error text as the SDK reported it.
+ * @param brand - which edition's helper the message should name.
+ * @returns the original detail, prefixed with the actionable explanation.
+ */
+export declare function cliFailureText(detail: string, brand: QoderBrand): string;
+/**
+ * The CLI version the installed SDK expects, read from its runtime manifest.
+ *
+ * Each SDK release pins one CLI build: the two speak a wire protocol that
+ * changes between them, and a mismatch fails every session with a bare exit
+ * code. The bundled helper reads the same file, so the page and the helper
+ * agree on which build to install.
+ *
+ * @param brand - which edition's SDK to inspect.
+ * @returns the pinned version, or undefined when the manifest is unreadable.
+ */
+export declare function requiredCliVersion(brand: QoderBrand): string | undefined;
+/**
+ * The version of the installed CLI, read from its own package manifest.
+ *
+ * Read from disk rather than by running `--version`: a settings-page poll must
+ * not spawn a process every second, and the npm package always ships a
+ * manifest next to its entry. A native build without one answers undefined,
+ * which callers treat as "unknown" and never as a mismatch.
+ *
+ * @param brand - which edition's CLI to inspect.
+ * @returns the installed version, or undefined when it cannot be read.
+ */
+export declare function installedCliVersion(brand: QoderBrand): string | undefined;

@@ -11,8 +11,10 @@
  * SDK's own defaults alone.
  */
 import * as path from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
-import { foreignCliOverride, qoderCliOptions, resolveQoderCli, type CliLookup } from '../src/cli.ts'
+import { cliChildEnv, foreignCliOverride, qoderCliOptions, resolveQoderCli, type CliLookup } from '../src/cli.ts'
 import { cliContextWindow, resolveDeclaredWindow } from '../src/adapter.ts'
 import { isImageAttachFailure } from '../src/session.ts'
 
@@ -145,6 +147,41 @@ describe('qoder CLI lookup', () => {
     // The explicit option wins over the SDK's own QODERCLI_PATH lookup, which
     // would otherwise still resolve to the CN CLI.
     expect(qoderCliOptions('global', both).pathToQoderCLIExecutable).toBe(INTL_BUNDLE)
+  })
+
+  it('follows the manifest when the package entry is not the guessed one', () => {
+    // A release may move its entry point (npm itself, a bundler, a partial
+    // reinstall). Probing only `bundle/<name>.js` then reported an installed
+    // package as missing, and the page insisted the CLI had to be installed —
+    // which is exactly what made "install, then sign in" loop.
+    const root = mkdtempSync(path.join(tmpdir(), 'qoder-cli-'))
+    const dir = path.join(root, 'node_modules', '@qodercn-ai', 'qoderclicn')
+    const entry = path.join(dir, 'dist', 'main.js')
+    mkdirSync(path.dirname(entry), { recursive: true })
+    writeFileSync(entry, '// cli\n')
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'qoderclicn', bin: { qoderclicn: 'dist/main.js' } }))
+
+    const lookup: CliLookup = {
+      env: { ...ENV, NPM_CONFIG_PREFIX: root, APPDATA: path.join(root, 'appdata'), QODER_CLI_HOME: path.join(root, 'home') },
+      exists: candidate => existsSync(candidate),
+      readdir: () => [],
+      // A real interpreter, so a script entry is answerable at all.
+      execPath: process.execPath,
+      electron: false,
+    }
+    expect(resolveQoderCli('cn', lookup)).toEqual({ path: entry, nodeDir: path.dirname(process.execPath) })
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('gives a child no foreign QODERCLI_PATH to inherit', () => {
+    // Both SDKs read that variable from the parent before any option, so the
+    // child must not carry the other edition's value at all.
+    const env = cliChildEnv('global', { ...ENV, QODERCLI_PATH: CN_BUNDLE })
+    expect(env.QODERCLI_PATH).toBeUndefined()
+    expect(env.QODERCN_EXPOSE_TOKEN_USAGE).toBe('1')
+    // A neutral path belongs to neither edition and is kept as it was.
+    const neutral = cliChildEnv('global', { ...ENV, QODERCLI_PATH: path.join(BASE, 'custom', 'cli.js') })
+    expect(neutral.QODERCLI_PATH).toBe(path.join(BASE, 'custom', 'cli.js'))
   })
 
   it('honours brand-specific CLI overrides', () => {

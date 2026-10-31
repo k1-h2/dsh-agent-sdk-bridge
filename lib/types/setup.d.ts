@@ -35,6 +35,27 @@ export interface SetupStatus {
     code?: number | null;
     lines: string[];
     truncated: boolean;
+    /**
+     * Whether this edition's CLI is on the machine right now.
+     *
+     * Read from the same lookup a session uses, not from the last run's exit
+     * code: after an uninstall the page must offer "install" again, and a run
+     * that ended successfully months ago says nothing about today's machine.
+     */
+    installed: boolean;
+    /** Version of the installed CLI, when its package manifest could be read. */
+    cliVersion?: string;
+    /** Version this plugin's SDK speaks; the helper installs exactly this one. */
+    requiredCliVersion?: string;
+    /**
+     * The installed CLI speaks a different protocol build than the SDK.
+     *
+     * Sessions then die with a bare exit code, so the page warns here — before a
+     * sign-in — instead of letting the user log in and hit the failure in chat.
+     */
+    versionMismatch?: boolean;
+    /** Whether the last run was stopped from the page rather than finishing. */
+    cancelled?: boolean;
 }
 /**
  * Locate one edition's helper inside this package.
@@ -69,6 +90,18 @@ export declare function startSetup(brand: QoderBrand, mode: SetupMode, onFinish?
  * @param brand - which edition's run to report.
  */
 export declare function readSetupStatus(brand?: QoderBrand): SetupStatus;
+/**
+ * Abandon the running helper for one edition.
+ *
+ * `qodercli login` waits for the browser to finish the callback, so closing
+ * that tab left the page polling a process that would never return. Killing
+ * the run turns it into a finished one (`code` null) so the page can offer the
+ * buttons again instead of showing a spinner forever.
+ *
+ * @param brand - which edition's run to stop.
+ * @returns whether a run was actually in flight.
+ */
+export declare function cancelSetup(brand: QoderBrand): boolean;
 /**
  * Abandon the running helper, if any.
  *

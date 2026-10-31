@@ -17,7 +17,7 @@ import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
 import type { QoderCatalogModel } from './catalog.ts'
 import { QODER_MODELS } from './catalog.ts'
-import { cliConflictMessage, foreignCliOverride, qoderCliOptions } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions } from './cli.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { loadSdk } from './sdk.ts'
@@ -94,7 +94,8 @@ export class QoderModelCatalog {
       this.failure = undefined
       return officialOnly(models)
     } catch (error) {
-      this.failure = error instanceof Error ? error.message : String(error)
+      const detail = error instanceof Error ? error.message : String(error)
+      this.failure = cliFailureText(detail, this.brand)
       // A failed refresh keeps serving the last good list rather than dropping
       // to the static fallback, which would hide the account's real models.
       return officialOnly((this.cached ?? sharedSnapshots.get(this.brand))?.models ?? [])
@@ -164,7 +165,31 @@ export class QoderModelCatalog {
       },
     })
     try {
-      return await withTimeout(q.getAvailableModels({ fetchStrategy: 'live' }), readLive(this.fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS))
+      const timeout = readLive(this.fetchTimeoutMs, DEFAULT_FETCH_TIMEOUT_MS)
+      // Read the account first, then ask for that account's catalog.
+      //
+      // On SDK 1.0.58 a `get_models` call made before any account lookup
+      // answers an empty list — even though the CLI's own `--list-models`
+      // prints eleven entries for the same login. Passing the account's `uid`
+      // (or simply having asked for the account in this session) returns the
+      // real list, so the catalogue has to be read in that order. Reporting
+      // the empty answer instead made the settings page show 0/0 and claim a
+      // working install was missing.
+      const account = await withTimeout(q.accountInfo(), timeout).catch(() => undefined)
+      const uid = account?.userId
+      const models = await withTimeout(
+        q.getAvailableModels(uid === undefined ? {} : { uid }),
+        timeout,
+      )
+      if (models.length > 0) return models
+      // Still empty: ask the CLI for its on-disk copy, then the server copy,
+      // before letting the page conclude the account has no models.
+      for (const strategy of ['cache', 'live'] as const) {
+        const fallback = await withTimeout(q.getAvailableModels({ ...uid === undefined ? {} : { uid }, fetchStrategy: strategy }), timeout)
+          .catch(() => [] as ModelInfo[])
+        if (fallback.length > 0) return fallback
+      }
+      return []
     } finally {
       await q.close().catch(() => undefined)
     }

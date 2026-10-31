@@ -8,7 +8,39 @@
   登录区域），其余代码按 brand 参数化。CN Qoder SDK 静态引入；另两个 SDK 按需 `import()`，
   没装时只有对应页面报错，插件照常加载。
 - **品牌隔离**：各 provider 的 CLI 查找、模型目录缓存、会话池、账户读取、模型开关全部按 brand
-  分开。`QODERCLI_PATH` 若指向另一 Qoder 版本，对应版本会明确报错而不是借用那个 CLI 的账号。
+  分开。`QODERCLI_PATH` 是机器级变量，不少 CN 安装会全局导出它；两个 SDK 又都在读到我们传的
+  选项之前就先读它，所以 `cliChildEnv()` 会从**子进程环境**里删掉指向另一版本的 `QODERCLI_PATH`
+  （中立路径保留）。查找本身也永远不把另一版本的路径当作本版本候选。`foreignCliOverride()`
+  现在只作诊断：本版本完全没有自己的 CLI 时才指出「那个变量属于另一版本」，绝不会因为它的存在
+  而让本版本拒绝启动——旧代码把它当致命错误，于是一台只装了国际版（或只装了 CN）的机器，
+  另一个页面即使装好 CLI 也登不进去。
+- **SDK 与 CLI 的版本是绑定的**：每个 SDK 发布版在 `dist/runtime-manifest.json` 里钉住一个
+  `qoderCliVersion`，两边说的是同一条 wire protocol。CLI 1.1.81 移除了旧 SDK 的 worker 会话握手，
+  于是 SDK 1.0.51 的每次查询都以 `Qoder CLI process exited with code 42` 结束，CLI 自己的日志写的
+  是 `sdk_worker_removed: … Upgrade to the latest Qoder SDK version, or roll back the CLI`。
+  因此：`dependencies` 里的两个 Qoder SDK 锁在同一个大版本（1.0.58 ↔ CLI 1.1.81）；
+  两个 `setup-*.bat` 从 SDK 清单读出 `qoderCliVersion` 并安装**那个精确版本**（不是 latest）；
+  `requiredCliVersion()` / `installedCliVersion()` 都从磁盘读（后者读 npm 包的 manifest，不 spawn），
+  `/setup` 据此回传 `requiredCliVersion` / `cliVersion` / `versionMismatch`，页面在登录前就红字提示；
+  `cliFailureText()` 把 code 42 翻译成「点一键配置装配套版本」，并把原始信息附在后面。
+  另注：`sdkDir()` 要剥掉 `dist` 这一层——`resolve()` 返回的是包内入口，直接 `dirname` 得到的是
+  `dist`，再拼 `dist/runtime-manifest.json` 就成了 `dist/dist/…`，两个探测都会静默失败。
+- **Qoder 目录要先读账号**：SDK 1.0.58 里，在 `accountInfo()` 之前调 `getAvailableModels()` 会返回
+  空数组（CLI 的 `--list-models` 同账号却能打出 11 条）。先在同一个 session 里取账号、再带 `uid`
+  查目录才稳定；空答案时再依次回落 `fetchStrategy: 'cache'` → `'live'`。否则设置页显示 0/0，
+  看起来像「没装 CLI」，实际只是读序不对。
+- **CLI 查找要认包清单**：`bundle/<name>.js` 是常见布局，不是唯一布局。`packageEntries()` 还会
+  读包自己的 `package.json`（`main`/`bin`），并把 Windows 的 `<node>/node_modules` 与 unix 的
+  `<prefix>/lib/node_modules` 都当作全局根。只猜 `bundle/` 会把已安装的 CLI 判成未安装，
+  页面就一直要你「再装一次」。
+- **卸载要清干净**：npm 只删包，会留下空的 `node_modules/@qoder-ai`（或 `@qodercn-ai`）目录和
+  `qodercli.cmd`/`.ps1` 之类 shim，而 CLI 查找和页面的「已安装」徽标读的正是这些。两个
+  `setup-*.bat` 的 `--uninstall` 会在 `npm uninstall -g` 之后删掉 shim 与空 scope 目录，
+  页面的「已安装」状态则来自 `readSetupStatus().installed`（每次现查 `resolveQoderCli()`），
+  所以卸载后主按钮会变回「安装 CLI」，而不是继续显示「卸载」。
+- **登录可取消**：`qodercli login` 会一直等浏览器回调，用户关掉标签页后旧代码只能空转。
+  `POST /setup {mode:'cancel'}` → `cancelSetup()` 杀掉子进程并把这次 run 标记为已结束
+  （`code: null`、`cancelled: true`），页面每 1.2 秒轮询一次状态，因此按钮会立刻回来。
 - **Qoder 的声明窗口必须稳定**：Qoder 的 `context_usage_ratio` 是「按 CLI 实际运行的窗口」算的，
   而 DSH 又用适配器上报的 `contextWindow` 当分母。两者一变，环就会跳。实测目录里 `dfmodel`
   等模型声明 `availableContextWindows: [200000, 400000, 1000000]`、默认 200000，用户选 1M 是

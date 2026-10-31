@@ -138,6 +138,29 @@ describe('settings API brand routing', () => {
     expect(cached.body()).toMatchObject({ brand: 'cn', fresh: false })
   })
 
+  it('passes a missing CLI through so the page can drop its cached reading', async () => {
+    // Without this flag the card kept showing the previous install's account
+    // and credits after the CLI had been uninstalled.
+    const missing = {
+      describeCatalog: async () => [],
+      contextWindowFor: () => undefined,
+      isModelDisabled: () => false,
+      catalogError: () => undefined,
+      usageInfo: async () => ({
+        at: 1, cliMissing: true,
+        error: '未检测到可用的 qoderclicn，请先安装并登录后再使用此版本。',
+      }),
+      invalidateCatalog: () => {},
+      invalidateUsage: () => {},
+    } as unknown as QoderAdapter
+
+    const r = response()
+    await handleApi(request(`${API_PREFIX}/usage?brand=cn`), r.res, { ...ADAPTERS, cn: missing })
+    expect(r.status()).toBe(200)
+    expect(r.body()).toMatchObject({ brand: 'cn', cliMissing: true })
+    expect(r.body().usage).toBeUndefined()
+  })
+
   it('serves the CodeBuddy catalog and account through the same routes', async () => {
     const models = response()
     await handleApi(request(`${API_PREFIX}/models?brand=codebuddy`), models.res, ADAPTERS)
@@ -308,11 +331,22 @@ describe('settings API brand routing', () => {
     const qoderMode = response()
     await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'bogus' }), qoderMode.res, ADAPTERS)
     expect(qoderMode.status()).toBe(400)
-    expect(qoderMode.body().error).toBe('mode 只接受 configure、login 或 uninstall')
+    expect(qoderMode.body().error).toBe('mode 只接受 configure、login、uninstall 或 cancel')
 
     const noBrand = response()
     await handleApi(request(`${API_PREFIX}/setup`, 'POST', { mode: 'install' }), noBrand.res, ADAPTERS)
     expect(noBrand.status()).toBe(400)
+  })
+
+  it('cancels a stalled Qoder login from the page', async () => {
+    // `qodercli login` waits for the browser callback; closing that tab used to
+    // leave the page polling forever. The cancel action settles the run, so the
+    // status comes back not-running and the buttons return.
+    const cancelled = response()
+    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'cancel' }), cancelled.res, ADAPTERS)
+    expect(cancelled.status()).toBe(200)
+    expect(cancelled.body()).toMatchObject({ running: false })
+    expect(typeof cancelled.body().installed).toBe('boolean')
   })
 
   it('refuses a brand it does not serve instead of defaulting to CN', async () => {

@@ -19,7 +19,7 @@ import type {
 import { createSdkMcpServer, qodercliAuth } from '@qodercn-ai/qodercn-agent-sdk'
 import type { CanUseTool, Query } from '@qodercn-ai/qodercn-agent-sdk'
 import type { QoderBrand } from './brand.ts'
-import { cliConflictMessage, foreignCliOverride, qoderCliOptions } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions } from './cli.ts'
 import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
@@ -1220,7 +1220,7 @@ export class QoderSession {
       }
       this.endTurn({ kind: 'error', failure: { message: 'qoder session stream ended unexpectedly', code: 'STREAM_CLOSED' } })
     } catch (error) {
-      this.endTurn({ kind: 'error', failure: { message: `qoder session died: ${String(error)}`, code: 'TRANSPORT' } })
+      this.endTurn({ kind: 'error', failure: { message: `qoder session died: ${cliFailureText(String(error), this.brand)}`, code: 'TRANSPORT' } })
     }
   }
 

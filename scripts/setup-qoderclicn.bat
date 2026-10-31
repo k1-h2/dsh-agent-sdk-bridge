@@ -74,6 +74,18 @@ if defined CLIV (
     echo       [--] qoderclicn not found
 )
 
+rem The SDK speaks a wire protocol that is pinned to one CLI release. CLI
+rem 1.1.81 dropped the old SDK session handshake and exits 42 on it, which the
+rem settings page could only report as "process exited with code 42". Reading
+rem the requirement from the installed SDK keeps this helper on a version the
+rem plugin can actually talk to, instead of whatever latest happens to be.
+set "WANTV="
+set "MANIFEST=%~dp0..\node_modules\@qodercn-ai\qodercn-agent-sdk\dist\runtime-manifest.json"
+if exist "%MANIFEST%" for /f "usebackq delims=" %%V in (`node -e "try{process.stdout.write(require(process.argv[1]).qoderCliVersion||'')}catch(e){}" "%MANIFEST%"`) do set "WANTV=%%V"
+set "PKGSPEC=%PKG%"
+if defined WANTV set "PKGSPEC=%PKG%@%WANTV%"
+if defined WANTV echo       [--] this plugin needs CLI !WANTV!
+
 rem ------------------------------------------------------------- 3 install
 echo.
 echo [3/5] Install the CLI
@@ -83,16 +95,29 @@ if not "%MODE%"=="setup" (
         echo             Run this script without an argument to install it.
         goto :fail
     )
+    if defined WANTV if not "!CLIV!"=="!WANTV!" (
+        echo       [X] installed !CLIV!, but this plugin needs !WANTV!.
+        echo             Run this script without an argument to install it.
+        goto :fail
+    )
     echo       [--] %MODE% mode, skipping install
     goto :login
 )
 if defined QCMD (
-    echo       [--] already on %CLIV%, skipping install.
+    if not defined WANTV goto :skipinstall
+    if "!CLIV!"=="!WANTV!" goto :skipinstall
+    echo       [--] installed !CLIV!, this plugin needs !WANTV! - reinstalling
+    goto :doinstall
+)
+:skipinstall
+if defined QCMD (
+    echo       [--] already on !CLIV!, skipping install.
     echo             latest version: qoderclicn update
     goto :login
 )
-echo       running npm install -g %PKG% ... needs network, please wait
-call npm install -g "%PKG%"
+:doinstall
+echo       running npm install -g %PKGSPEC% ... needs network, please wait
+call npm install -g "%PKGSPEC%"
 if not errorlevel 1 goto :installed
 echo       [X] npm install failed. Usual causes:
 echo             1 DEPTH_ZERO_SELF_SIGNED_CERT
@@ -105,6 +130,7 @@ goto :fail
 
 :installed
 set "QCMD="
+set "CLIV="
 for /f "delims=" %%P in ('where qoderclicn.cmd 2^>nul') do if not defined QCMD set "QCMD=%%P"
 if not defined QCMD if exist "%APPDATA%\npm\qoderclicn.cmd" set "QCMD=%APPDATA%\npm\qoderclicn.cmd"
 if not defined QCMD (
@@ -203,7 +229,7 @@ goto :done
 
 :uninstall
 echo.
-echo [2/2] Uninstall %PKG%
+echo [1/2] Uninstall %PKG%
 call npm uninstall -g "%PKG%"
 if errorlevel 1 (
     echo       [X] npm uninstall failed.
@@ -211,12 +237,33 @@ if errorlevel 1 (
     goto :fail
 )
 echo       [OK] %PKG% removed
+
+rem npm leaves the scope directory and the shims behind, and both the
+rem plugin's CLI lookup and the page's "installed?" badge read them. Clearing
+rem them here is what actually makes the page switch back to "install".
+echo.
+echo [2/2] Clean leftovers
+if exist "%APPDATA%\npm\node_modules\@qodercn-ai\qoderclicn" rd /s /q "%APPDATA%\npm\node_modules\@qodercn-ai\qoderclicn" 2>nul
+dir /b "%APPDATA%\npm\node_modules\@qodercn-ai" 2>nul | findstr /r "." >nul
+if errorlevel 1 rd /s /q "%APPDATA%\npm\node_modules\@qodercn-ai" 2>nul
+call :delshims qoderclicn qodercn
+echo       [OK] shims and empty scope dir cleared
+
 echo.
 echo  ==============================================================
-echo   Uninstalled. Sign-in files are kept; run this script again
-echo   without --uninstall to reinstall and sign in.
+echo   Uninstalled. Sign-in files under %USERPROFILE%\.qoder-cn are kept;
+echo   run this script again without --uninstall to reinstall and sign in.
 echo  ==============================================================
 goto :done
+
+rem Delete the npm shim trio for each name given, ignoring absent ones.
+:delshims
+if "%~1"=="" goto :eof
+if exist "%APPDATA%\npm\%~1.cmd" del /q "%APPDATA%\npm\%~1.cmd" 2>nul
+if exist "%APPDATA%\npm\%~1.ps1" del /q "%APPDATA%\npm\%~1.ps1" 2>nul
+if exist "%APPDATA%\npm\%~1" del /q "%APPDATA%\npm\%~1" 2>nul
+shift
+goto :delshims
 
 :usage
 echo.

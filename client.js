@@ -86,6 +86,13 @@ window.__ModuleLoader__.load({
       cliUninstallConfirm: '确定要卸载本机的 Qoder CLI 吗？卸载后需要重新安装才能继续使用，登录凭证会保留。',
       cliUninstalling: '正在卸载…',
       cliUninstallOk: 'CLI 已卸载',
+      cliInstall: '安装 CLI',
+      cliInstalled: '已安装',
+      cliCancel: '取消',
+      cliCancelling: '正在取消…',
+      cliCancelled: '已取消，可以重新操作',
+      cliVersionMismatch: 'CLI 版本与插件不匹配：本机',
+      cliVersionMismatchTail: '，插件需要',
       intlNav: 'Qoder 国际版',
       intlTitle: 'Qoder 国际版',
       intlIntro: '国际版账户（qoder.com）的模型与额度。勾选要启用的模型，并为需要的模型指定上下文窗口。改动即时生效，无需重启。',
@@ -113,6 +120,7 @@ window.__ModuleLoader__.load({
       usageUpdated: '更新于',
       usageUnknownPlan: '未知套餐',
       usageStale: '显示上次读数，刷新失败',
+      usageCliMissing: '未检测到本机 CLI，安装并登录后才会显示额度。',
       pluginOptionsTitle: '启用的版本',
       pluginOptionsHint: '关闭后，对应设置页、模型列表与模型分组都会移除；已保存的模型选择保留，重新打开即可恢复。',
       pluginOptionsOn: '显示中',
@@ -275,6 +283,13 @@ window.__ModuleLoader__.load({
       cliUninstallConfirm: 'Uninstall the Qoder CLI from this machine? It must be installed again to keep using this edition. Sign-in files are kept.',
       cliUninstalling: 'Uninstalling…',
       cliUninstallOk: 'CLI uninstalled',
+      cliInstall: 'Install CLI',
+      cliInstalled: 'Installed',
+      cliCancel: 'Cancel',
+      cliCancelling: 'Cancelling…',
+      cliCancelled: 'Cancelled — you can start again',
+      cliVersionMismatch: 'CLI version does not match the plugin: this machine has',
+      cliVersionMismatchTail: 'but the plugin needs',
       intlNav: 'Qoder International',
       intlTitle: 'Qoder International',
       intlIntro: 'Models and quota for the international account (qoder.com). Tick the models you want available and set a context window where needed. Changes apply immediately.',
@@ -302,6 +317,7 @@ window.__ModuleLoader__.load({
       usageUpdated: 'Updated',
       usageUnknownPlan: 'Unknown plan',
       usageStale: 'Showing the last reading; refresh failed',
+      usageCliMissing: 'This machine has no CLI for this edition; quota appears after it is installed and signed in.',
       pluginOptionsTitle: 'Enabled editions',
       pluginOptionsHint: 'Turning one off removes its settings page, model list, and model group. Saved model choices are kept, so turning it back on restores them.',
       pluginOptionsOn: 'Shown',
@@ -644,6 +660,24 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Forget one cached answer.
+     *
+     * Needed when the cache has become wrong rather than merely old: after an
+     * uninstall the stored quota describes an account read through a CLI that
+     * is no longer on the machine, and painting it again on the next render
+     * would keep showing numbers nobody can reproduce.
+     */
+    function clearCache(brand, kind) {
+      const key = cacheKey(brand, kind)
+      cacheMemory.delete(key)
+      try {
+        window.localStorage.removeItem(key)
+      } catch {
+        /* storage unavailable: the in-memory copy is already gone */
+      }
+    }
+
     /** Call the plugin's model API. */
     async function api(path, options) {
       const { timeout = 30_000, ...rest } = options ?? {}
@@ -860,6 +894,8 @@ window.__ModuleLoader__.load({
       const [snapshot, setSnapshot] = useState(() => readCache(brand.id, 'usage'))
       const [failure, setFailure] = useState(undefined)
       const [busy, setBusy] = useState(false)
+      /** The CLI is not installed: show that, and never any cached numbers. */
+      const [missing, setMissing] = useState(false)
       const ticket = useRef(0)
 
       const load = useCallback(async (fresh = false) => {
@@ -869,12 +905,25 @@ window.__ModuleLoader__.load({
         try {
           const payload = await api(`/usage?brand=${brand.id}${fresh ? '&fresh=1' : ''}`, { timeout: 45_000 })
           if (mine !== ticket.current) return
-          // A failed account lookup (signed out, endpoint down) must not replace
+          // The CLI is gone: the stored reading describes an installation that
+          // no longer exists, so drop it (memory and storage) instead of
+          // labelling old credits "last reading". This is what makes the card
+          // empty out after an uninstall.
+          if (payload?.cliMissing === true) {
+            clearCache(brand.id, 'usage')
+            setSnapshot(undefined)
+            setMissing(true)
+            setFailure(String(payload.error ?? t('usageCliMissing')))
+            return
+          }
+          // Any other failed lookup (signed out, endpoint down) must not replace
           // the last good reading with an empty card: keep it and say so.
           if (payload?.usage === undefined && payload?.error !== undefined) {
+            setMissing(false)
             setFailure(String(payload.error))
             return
           }
+          setMissing(false)
           setSnapshot(payload)
           writeCache(brand.id, 'usage', payload)
         } catch (err) {
@@ -911,9 +960,14 @@ window.__ModuleLoader__.load({
       if (snapshot === undefined || usage === undefined) {
         return h('div', { style: css.usageCard },
           head,
-          error === undefined
-            ? h('div', { style: css.note }, t('usageLoading'))
-            : h('div', { style: css.err }, `${t('usageUnavailable')}：${error}`),
+          // Nothing is shown for a missing CLI beyond the reason: the account,
+          // plan and credits a previous install reported are not this machine's
+          // state any more.
+          missing
+            ? h('div', { style: css.note }, error ?? t('usageCliMissing'))
+            : error === undefined
+              ? h('div', { style: css.note }, t('usageLoading'))
+              : h('div', { style: css.err }, `${t('usageUnavailable')}：${error}`),
           error === undefined
             ? null
             : h('div', { style: css.bar },
@@ -2077,6 +2131,14 @@ window.__ModuleLoader__.load({
       const setupCode = setup !== undefined && setup.running === false ? setup.code : undefined
       const setupFinishedAt = setup?.finishedAt
       const setupLines = Array.isArray(setup?.lines) ? setup.lines : []
+      // `installed` is read from the host's own CLI lookup, so the button
+      // follows the machine rather than the last run: after an uninstall it
+      // reads false even though that run exited 0, and the page offers
+      // "install" again instead of a dead "uninstall". Until the first status
+      // arrives the old layout is kept, so opening the page does not flash an
+      // "install" button on a machine that already has the CLI.
+      const cliInstalled = setup === undefined ? true : setup.installed === true
+      const setupCancelled = setup?.cancelled === true
 
       useEffect(() => { void pollSetup() }, [pollSetup])
       useEffect(() => {
@@ -2311,10 +2373,36 @@ window.__ModuleLoader__.load({
         brand.kind !== 'qoder' ? null : h('div', { style: css.group },
           h('h3', { style: css.h3 }, t(brand.cliGroupKey)),
           h('div', { style: css.note }, t(brand.cliHintKey)),
+          // Each SDK release pins one CLI build; a mismatch kills every session
+          // with a bare exit code, so warn before the user signs in or chats.
+          setup?.versionMismatch === true
+            ? h('div', { style: { ...css.err, marginTop: '6px' } },
+                `${t('cliVersionMismatch')} ${setup.cliVersion ?? '?'} ${t('cliVersionMismatchTail')} ${setup.requiredCliVersion ?? '?'}`)
+            : null,
           h('div', { style: { ...css.bar, flexWrap: 'nowrap' } },
-            h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('configure') }, t('cliRun')),
-            h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('login') }, t('cliLogin')),
-            h('button', { style: { ...css.btn, ...css.btnAlert }, disabled: setupRunning, onClick: uninstallCli }, t('cliUninstall')),
+            // The primary action follows the machine: install when the CLI is
+            // gone, configure/re-login when it is there. Offering "uninstall"
+            // on a machine that has none was the confusing half of the old
+            // fixed trio.
+            cliInstalled
+              ? h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('configure') },
+                  setup?.versionMismatch === true ? t('cliInstall') : t('cliRun'))
+              : h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('configure') }, t('cliInstall')),
+            cliInstalled
+              ? h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('login') }, t('cliLogin'))
+              : null,
+            cliInstalled
+              ? h('button', { style: { ...css.btn, ...css.btnAlert }, disabled: setupRunning, onClick: uninstallCli }, t('cliUninstall'))
+              : null,
+            // The login step waits for a browser callback; closing that tab
+            // used to leave this row spinning forever. Cancelling settles the
+            // run so the buttons come back.
+            setupRunning
+              ? h('button', {
+                  style: { ...css.btn, ...css.btnAlert },
+                  onClick: () => void startCliSetup('cancel'),
+                }, t('cliCancel'))
+              : null,
             setupLines.length > 0 && !setupRunning
               ? h('button', { style: css.btn, onClick: () => setLogOpen(value => !value) }, logOpen ? t('cliHideLog') : t('cliShowLog'))
               : null,
@@ -2322,14 +2410,16 @@ window.__ModuleLoader__.load({
               ? (setup?.mode === 'uninstall' ? t('cliUninstalling') : t('cliRunning'))
               : setupError !== undefined
                 ? setupError
-                : setupCode === 0
-                  ? (setup?.mode === 'uninstall' ? t('cliUninstallOk') : t('cliExitOk'))
-                  : setupCode === undefined || setupCode === null
-                    ? ''
-                    : `${t('cliExitFail')} ${setupCode}`),
+                : setupCancelled
+                  ? t('cliCancelled')
+                  : setupCode === 0
+                    ? (setup?.mode === 'uninstall' ? t('cliUninstallOk') : t('cliExitOk'))
+                    : setupCode === undefined || setupCode === null
+                      ? ''
+                      : `${t('cliExitFail')} ${setupCode}`),
           ),
           logOpen && setupLines.length > 0
-            ? h('pre', { ref: logRef, style: css.log }, setupLines.join('\n'))
+            ? h('pre', { ref: logRef, style: css.log }, setupLines.join('\\n'))
             : null,
         ),
 

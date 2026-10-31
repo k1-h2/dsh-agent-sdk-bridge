@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { TextDecoder } from 'node:util'
 import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
+import { installedCliVersion, requiredCliVersion, resolveQoderCli } from './cli.ts'
 
 /** File name of the CN helper, shipped under this package's `scripts/` directory. */
 export const SCRIPT_NAME = 'setup-qoderclicn.bat'
@@ -65,6 +66,8 @@ interface Run {
   pending: string
   decoder: TextDecoder
   truncated: boolean
+  /** Set when the page cancelled this run, so it can say so instead of a code. */
+  cancelled?: boolean
 }
 
 /** The latest run per edition: the two installers may run independently. */
@@ -80,6 +83,27 @@ export interface SetupStatus {
   code?: number | null
   lines: string[]
   truncated: boolean
+  /**
+   * Whether this edition's CLI is on the machine right now.
+   *
+   * Read from the same lookup a session uses, not from the last run's exit
+   * code: after an uninstall the page must offer "install" again, and a run
+   * that ended successfully months ago says nothing about today's machine.
+   */
+  installed: boolean
+  /** Version of the installed CLI, when its package manifest could be read. */
+  cliVersion?: string
+  /** Version this plugin's SDK speaks; the helper installs exactly this one. */
+  requiredCliVersion?: string
+  /**
+   * The installed CLI speaks a different protocol build than the SDK.
+   *
+   * Sessions then die with a bare exit code, so the page warns here — before a
+   * sign-in — instead of letting the user log in and hit the failure in chat.
+   */
+  versionMismatch?: boolean
+  /** Whether the last run was stopped from the page rather than finishing. */
+  cancelled?: boolean
 }
 
 /**
@@ -210,8 +234,21 @@ export function startSetup(
  * @param brand - which edition's run to report.
  */
 export function readSetupStatus(brand: QoderBrand = 'cn'): SetupStatus {
+  const installed = resolveQoderCli(brand) !== undefined
+  const cliVersion = installed ? installedCliVersion(brand) : undefined
+  const required = requiredCliVersion(brand)
+  const build = {
+    installed,
+    ...cliVersion === undefined ? {} : { cliVersion },
+    ...required === undefined ? {} : { requiredCliVersion: required },
+    // Unknown on either side is not a mismatch: a native build carries no
+    // manifest, and warning about a version nobody could read would be noise.
+    ...cliVersion === undefined || required === undefined
+      ? {}
+      : { versionMismatch: cliVersion !== required },
+  }
   const run = current.get(brand)
-  if (run === undefined) return { running: false, lines: [], truncated: false }
+  if (run === undefined) return { running: false, lines: [], truncated: false, ...build }
   const lines = run.pending.trim() === ''
     ? run.lines
     : [...run.lines, run.pending.trim()]
@@ -222,7 +259,38 @@ export function readSetupStatus(brand: QoderBrand = 'cn'): SetupStatus {
     ...run.finishedAt === undefined ? {} : { finishedAt: run.finishedAt, code: run.code ?? null },
     lines,
     truncated: run.truncated,
+    ...build,
+    ...run.cancelled === true ? { cancelled: true } : {},
   }
+}
+
+/**
+ * Abandon the running helper for one edition.
+ *
+ * `qodercli login` waits for the browser to finish the callback, so closing
+ * that tab left the page polling a process that would never return. Killing
+ * the run turns it into a finished one (`code` null) so the page can offer the
+ * buttons again instead of showing a spinner forever.
+ *
+ * @param brand - which edition's run to stop.
+ * @returns whether a run was actually in flight.
+ */
+export function cancelSetup(brand: QoderBrand): boolean {
+  const run = current.get(brand)
+  if (run === undefined || run.finishedAt !== undefined) return false
+  run.lines.push('已取消：这次配置被手动终止，可以重新操作。')
+  run.cancelled = true
+  try {
+    run.child.kill()
+  } catch {
+    // Already gone; settling below still releases the page.
+  }
+  // The child's `close` handler may arrive later (or never, if it never
+  // spawned); settle here so the page is not left waiting on it. `finish()`
+  // refuses to touch a settled run, so the late event cannot overwrite this.
+  run.finishedAt = Date.now()
+  run.code = null
+  return true
 }
 
 /**

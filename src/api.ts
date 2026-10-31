@@ -26,7 +26,7 @@ import type { MinimaxAdapter } from './minimax-adapter.ts'
 import type { BrandId, CodeBuddyRegion, MinimaxRegion } from './brand.ts'
 import { isBrandId, isCodeBuddyRegion } from './brand.ts'
 import { priceFactorOf } from './models.ts'
-import { isSetupMode, readSetupStatus, startSetup } from './setup.ts'
+import { cancelSetup, isSetupMode, readSetupStatus, startSetup } from './setup.ts'
 import { isMinimaxSetupMode, readMinimaxSetupStatus, startMinimaxSetup } from './minimax-cli.ts'
 
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
@@ -394,8 +394,13 @@ export async function handleApi(
           send(res, 200, readMinimaxSetupStatus())
           return
         }
+        if (parsed.mode === 'cancel') {
+          cancelSetup(postBrand)
+          send(res, 200, readSetupStatus(postBrand))
+          return
+        }
         if (!isSetupMode(parsed.mode)) {
-          send(res, 400, { error: 'mode 只接受 configure、login 或 uninstall' })
+          send(res, 400, { error: 'mode 只接受 configure、login、uninstall 或 cancel' })
           return
         }
         const qoder = adapters[postBrand] as QoderAdapter

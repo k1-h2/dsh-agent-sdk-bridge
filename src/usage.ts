@@ -18,7 +18,7 @@
 import type { AccountInfo, UsageInfo } from '@qodercn-ai/qodercn-agent-sdk'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
-import { cliConflictMessage, foreignCliOverride, qoderCliOptions } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from './cli.ts'
 import { withTimeout } from './models.ts'
 import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
@@ -39,6 +39,16 @@ export interface UsageSnapshot {
   account?: AccountInfo
   /** Why the quota is missing, in the CLI's own words. */
   error?: string
+  /**
+   * Whether this edition's CLI is absent from the machine right now.
+   *
+   * The page keeps its last good reading visible while a refresh fails, which
+   * is right for a dropped network — but not after an uninstall: the account,
+   * plan and credits it shows belong to a CLI that is no longer installed.
+   * This flag tells the page to drop that reading instead of labelling it
+   * "last reading".
+   */
+  cliMissing?: boolean
 }
 
 /** Streaming prompt that never yields, so no model turn runs during the read. */
@@ -69,6 +79,14 @@ export class QoderUsage {
    * @returns the reading; `error` carries a failed lookup instead of throwing.
    */
   async read(fresh = false): Promise<UsageSnapshot> {
+    // An uninstalled CLI makes every cached number describe a machine state
+    // that no longer exists: the account, plan and credits came from a binary
+    // that is gone. Answer that before the cache is consulted, and drop the
+    // reading so the page cannot paint it again on the next render.
+    if (resolveQoderCli(this.brand) === undefined) {
+      this.cached = undefined
+      return this.missingCli()
+    }
     const ttlMs = readLive(this.ttlMs, DEFAULT_USAGE_CACHE_TTL_MS)
     if (!fresh && this.cached !== undefined && Date.now() - this.cached.at < ttlMs) return this.cached
     this.inflight ??= this.fetch().finally(() => { this.inflight = undefined })
@@ -82,11 +100,23 @@ export class QoderUsage {
     this.cached = undefined
   }
 
+  /** The reading for a machine whose CLI is not installed. */
+  private missingCli(): UsageSnapshot {
+    const command = brandProfile(this.brand).cliCommands[0]
+    return {
+      at: Date.now(),
+      cliMissing: true,
+      error: `未检测到可用的 ${command}，请先安装并登录后再使用此版本。`,
+    }
+  }
+
   private async fetch(): Promise<UsageSnapshot> {
     const at = Date.now()
     try {
       const conflict = foreignCliOverride(this.brand)
-      if (conflict !== undefined) return { at, error: cliConflictMessage(this.brand) }
+      if (conflict !== undefined) {
+        return { at, cliMissing: true, error: cliConflictMessage(this.brand) }
+      }
       const sdk = await loadSdk(this.brand)
       const timeoutMs = readLive(this.timeoutMs, DEFAULT_USAGE_TIMEOUT_MS)
       const q = sdk.query({
@@ -121,7 +151,7 @@ export class QoderUsage {
       const missingCli = /ENOENT|not found|Cannot find package|未安装国际版 SDK/i.test(detail)
       return {
         at,
-        error: missingCli ? `未检测到可用的 ${command}，请先安装并登录后再读取额度。` : detail,
+        error: missingCli ? `未检测到可用的 ${command}，请先安装并登录后再读取额度。` : cliFailureText(detail, this.brand),
       }
     }
   }

@@ -25,7 +25,7 @@
  * @module dsh-agent-sdk-bridge/cli
  */
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import * as path from 'node:path'
@@ -130,11 +130,15 @@ export function qoderCliOptions(brand: QoderBrand = 'cn', lookup: CliLookup = {}
   // every branch hands over the environment the CLI would have inherited anyway
   // — handing over `PATH` alone would strip the CLI of the directories it keeps
   // its own state in — plus the switch that unzeroes its token metering.
+  //
+  // `cliChildEnv` also drops a `QODERCLI_PATH` naming the *other* edition.
+  // Both SDKs consult that variable before any option passed here, so leaving
+  // it in place is what made an intl session answer with the CN account (and,
+  // before that was understood, refuse to start at all on a machine whose CN
+  // installer had exported it globally).
+  const env = cliChildEnv(brand)
   if (cli.nodeDir === undefined) {
-    return {
-      pathToQoderCLIExecutable: cli.path,
-      env: { ...process.env, ...EXPOSE_TOKEN_USAGE },
-    }
+    return { pathToQoderCLIExecutable: cli.path, env }
   }
   return {
     pathToQoderCLIExecutable: cli.path,
@@ -142,7 +146,7 @@ export function qoderCliOptions(brand: QoderBrand = 'cn', lookup: CliLookup = {}
     // resolves it against PATH, so the interpreter's own directory is put in
     // front of the inherited PATH instead of being spelled out here.
     executable: 'node',
-    env: { ...process.env, PATH: `${cli.nodeDir}${path.delimiter}${process.env.PATH ?? ''}`, ...EXPOSE_TOKEN_USAGE },
+    env: { ...env, PATH: `${cli.nodeDir}${path.delimiter}${env.PATH ?? ''}` },
   }
 }
 
@@ -164,23 +168,54 @@ export function isForeignCliPath(brand: QoderBrand, candidate: string): boolean 
 }
 
 /**
- * A `QODERCLI_PATH` that names the other edition, when this one has no CLI.
+ * Why this edition has no usable CLI, when `QODERCLI_PATH` explains it.
  *
- * The SDKs read that variable from the parent process before any option this
- * plugin can pass, so when it is foreign and this edition has nothing of its
- * own, the only honest answer is a configuration error — spawning the other
- * edition's CLI would answer with the other edition's account.
+ * `QODERCLI_PATH` predates the international edition and some installers
+ * export it machine-wide. Both SDKs read it from the parent process before any
+ * option this plugin can pass, so a value naming the *other* edition would
+ * hand this edition's session the other account. The lookup therefore never
+ * offers it ({@link isForeignCliPath}), and this reports the case where it is
+ * all the machine has, so the page can ask for the right CLI to be installed.
+ *
+ * This is a diagnosis, not a second rule: an edition that finds its own CLI is
+ * unaffected by the variable. That is what keeps one edition's install from
+ * blocking the other's sign-in — the earlier code treated any foreign value as
+ * fatal, so a machine that had only the intl CLI installed could not sign in
+ * to CN even after installing it if the lookup missed the new package.
  *
  * @param brand - the edition the caller is about to start.
  * @param lookup - the machine to inspect; defaults to this process's.
+ * @returns the foreign override when this edition has nothing of its own.
  */
 export function foreignCliOverride(brand: QoderBrand, lookup: CliLookup = {}): string | undefined {
   const env = lookup.env ?? process.env
   const override = env.QODERCLI_PATH
   if (override === undefined || override.length === 0) return undefined
   if (!isForeignCliPath(brand, override)) return undefined
+  // A CLI of our own always wins; the session then ignores the variable
+  // entirely because it names the executable explicitly.
   if (resolveQoderCli(brand, lookup) !== undefined) return undefined
   return override
+}
+
+/**
+ * The environment one session's child process receives.
+ *
+ * `QODERCLI_PATH` is stripped when it names the other edition: both SDKs read
+ * it from the parent before honouring any option, so leaving it in place would
+ * hand the intl session the CN CLI (and the CN account). Every other variable
+ * is inherited untouched — the CLI keeps its state in `PATH`-relative dirs.
+ *
+ * @param brand - which edition's child is being started.
+ * @param env - the environment to derive from; defaults to this process's.
+ */
+export function cliChildEnv(brand: QoderBrand, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const child: NodeJS.ProcessEnv = { ...env, ...EXPOSE_TOKEN_USAGE }
+  const override = env.QODERCLI_PATH
+  if (override !== undefined && override.length > 0 && isForeignCliPath(brand, override)) {
+    delete child.QODERCLI_PATH
+  }
+  return child
 }
 
 /**
@@ -193,6 +228,87 @@ export function foreignCliOverride(brand: QoderBrand, lookup: CliLookup = {}): s
 export function cliConflictMessage(brand: QoderBrand): string {
   const command = brandProfile(brand).cliCommands[0]
   return `未检测到可用的 ${command}，请先安装并登录后再使用此版本。`
+}
+
+/**
+ * Turn a CLI failure into something a user can act on.
+ *
+ * The SDK reports an outdated CLI as `Qoder CLI process exited with code 42`,
+ * which says nothing about the cause: CLI 1.1.81 removed the worker-session
+ * handshake the older SDK spoke, and its own log says so
+ * (`sdk_worker_removed: … Upgrade to the latest Qoder SDK version, or roll back
+ * the CLI`). The only fix available to a user is reinstalling the pair through
+ * the bundled helper, so say that instead of echoing the number.
+ *
+ * @param detail - the error text as the SDK reported it.
+ * @param brand - which edition's helper the message should name.
+ * @returns the original detail, prefixed with the actionable explanation.
+ */
+export function cliFailureText(detail: string, brand: QoderBrand): string {
+  if (!/exit(?:ed)?(?: with)? code 42|sdk_worker_removed/i.test(detail)) return detail
+  const profile = brandProfile(brand)
+  const pkg = profile.cliPackages[0]
+  const spec = pkg === undefined ? profile.cliCommands[0] : `${pkg.scope}/${pkg.name}`
+  const required = requiredCliVersion(brand)
+  const target = required === undefined ? spec : `${spec}@${required}`
+  return `本机 ${profile.cliCommands[0]} 与插件使用的 SDK 版本不匹配（CLI 已移除旧版握手，退出码 42）。`
+    + `请在设置页点「一键配置」重新安装配套版本，或手动执行 npm install -g ${target} 后重试。`
+    + `原始信息：${detail}`
+}
+
+/**
+ * The CLI version the installed SDK expects, read from its runtime manifest.
+ *
+ * Each SDK release pins one CLI build: the two speak a wire protocol that
+ * changes between them, and a mismatch fails every session with a bare exit
+ * code. The bundled helper reads the same file, so the page and the helper
+ * agree on which build to install.
+ *
+ * @param brand - which edition's SDK to inspect.
+ * @returns the pinned version, or undefined when the manifest is unreadable.
+ */
+export function requiredCliVersion(brand: QoderBrand): string | undefined {
+  try {
+    const dir = sdkDir(brandProfile(brand).sdkPackage)
+    if (dir === undefined) return undefined
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'dist', 'runtime-manifest.json'), 'utf8')) as {
+      qoderCliVersion?: unknown
+    }
+    return typeof manifest.qoderCliVersion === 'string' && manifest.qoderCliVersion.length > 0
+      ? manifest.qoderCliVersion
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The version of the installed CLI, read from its own package manifest.
+ *
+ * Read from disk rather than by running `--version`: a settings-page poll must
+ * not spawn a process every second, and the npm package always ships a
+ * manifest next to its entry. A native build without one answers undefined,
+ * which callers treat as "unknown" and never as a mismatch.
+ *
+ * @param brand - which edition's CLI to inspect.
+ * @returns the installed version, or undefined when it cannot be read.
+ */
+export function installedCliVersion(brand: QoderBrand): string | undefined {
+  const cli = resolveQoderCli(brand)
+  if (cli === undefined) return undefined
+  for (const candidate of [
+    path.join(path.dirname(cli.path), 'package.json'),
+    path.join(path.dirname(path.dirname(cli.path)), 'package.json'),
+  ]) {
+    try {
+      const manifest = JSON.parse(readFileSync(candidate, 'utf8')) as { name?: unknown, version?: unknown }
+      if (typeof manifest.name !== 'string' || !manifest.name.startsWith('@')) continue
+      if (typeof manifest.version === 'string' && manifest.version.length > 0) return manifest.version
+    } catch {
+      // No manifest at this level: try the parent, then give up.
+    }
+  }
+  return undefined
 }
 
 /** Paths the CLI may live at, most explicit first. */
@@ -211,9 +327,11 @@ function candidates(brand: QoderBrand, env: NodeJS.ProcessEnv, suffix: string, n
   for (const root of nodeModulesRoots(env, nodePath)) {
     for (const pkg of profile.cliPackages) {
       const dir = path.join(root, pkg.scope, pkg.name)
-      // npm's own global shim points at `bundle/`; a flat layout has no such dir.
-      push(path.join(dir, 'bundle', `${pkg.name}.js`))
-      push(path.join(dir, `${pkg.name}.js`))
+      // npm's own global shim points at `bundle/`; a flat layout has no such
+      // dir. The package's own manifest is consulted too: the entry has moved
+      // between releases, and guessing only `bundle/<name>.js` made a working
+      // install look missing — the page then insisted the CLI was not there.
+      for (const entry of packageEntries(dir, pkg.name, suffix)) push(entry)
     }
   }
   const sdk = sdkDir(profile.sdkPackage)
@@ -228,6 +346,40 @@ function candidates(brand: QoderBrand, env: NodeJS.ProcessEnv, suffix: string, n
   return found
 }
 
+/**
+ * Every path one installed npm package can expose as its CLI.
+ *
+ * `main`/`bin` are read from the package's own manifest rather than guessed:
+ * the entry point has changed between CLI releases, and hard-coding only
+ * `bundle/<name>.js` reported an installed package as missing whenever it did
+ * not match. Unreadable manifests fall back to the conventional entries.
+ */
+function packageEntries(dir: string, name: string, suffix: string): string[] {
+  const entries: string[] = [
+    path.join(dir, 'bundle', `${name}.js`),
+    path.join(dir, `${name}.js`),
+    path.join(dir, 'bundle', `${name}${suffix}`),
+  ]
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')) as {
+      main?: unknown
+      bin?: unknown
+    }
+    if (typeof manifest.main === 'string') entries.push(path.join(dir, manifest.main))
+    const bin = manifest.bin
+    if (typeof bin === 'string') entries.push(path.join(dir, bin))
+    else if (bin !== null && typeof bin === 'object') {
+      for (const value of Object.values(bin)) {
+        if (typeof value === 'string') entries.push(path.join(dir, value))
+      }
+    }
+  } catch {
+    // No readable manifest (or no package at all): the conventional entries
+    // above are everything worth probing.
+  }
+  return entries
+}
+
 /** `node_modules` roots a global install can land in. */
 function nodeModulesRoots(env: NodeJS.ProcessEnv, nodePath: string | undefined): string[] {
   const roots: string[] = []
@@ -240,7 +392,16 @@ function nodeModulesRoots(env: NodeJS.ProcessEnv, nodePath: string | undefined):
   push(env.NPM_CONFIG_PREFIX === undefined ? undefined : path.join(env.NPM_CONFIG_PREFIX, 'node_modules'))
   push(env.APPDATA === undefined ? undefined : path.join(env.APPDATA, 'npm', 'node_modules'))
   push(path.join(homedir(), '.npm-global', 'node_modules'))
-  if (nodePath !== undefined) push(path.join(path.dirname(path.dirname(nodePath)), 'lib', 'node_modules'))
+  if (nodePath !== undefined) {
+    // A Windows install keeps globals directly under its prefix
+    // (`<node>\\node_modules`); a unix one under `<prefix>/lib/node_modules`.
+    // Only the unix shape used to be probed, so a Windows Node outside
+    // %APPDATA%\\npm — a portable or per-drive install — had a working CLI the
+    // lookup could not see, and the page kept asking to install it again.
+    const prefix = path.dirname(nodePath)
+    push(path.join(prefix, 'node_modules'))
+    push(path.join(path.dirname(prefix), 'lib', 'node_modules'))
+  }
   return roots
 }
 
@@ -283,7 +444,13 @@ function resolveNode(lookup: CliLookup): string | undefined {
  */
 function sdkDir(packageName: string): string | undefined {
   try {
-    return path.dirname(createRequire(import.meta.url).resolve(packageName))
+    const entry = createRequire(import.meta.url).resolve(packageName)
+    // `resolve` answers the package's entry *inside* its dist directory, so
+    // climbing one level only lands on `dist`. Callers want the package root:
+    // they join `dist/runtime-manifest.json` and `dist/_bundled/<cli>`, and a
+    // doubled `dist/dist/…` made both probes miss.
+    const dir = path.dirname(entry)
+    return path.basename(dir) === 'dist' ? path.dirname(dir) : dir
   } catch {
     return undefined
   }

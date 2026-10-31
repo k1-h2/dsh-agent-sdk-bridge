@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  SCRIPT_NAME, isSetupMode, readSetupStatus, setupScriptPath, startSetup,
+  SCRIPT_NAME, cancelSetup, isSetupMode, readSetupStatus, setupScriptPath, startSetup,
 } from '../src/setup.ts'
 import { brandProfile } from '../src/brand.ts'
 
@@ -46,6 +46,30 @@ describe('setup helper', () => {
     expect(status.running).toBe(false)
     expect(status.lines).toEqual([])
     expect(status.truncated).toBe(false)
+    // Whether the CLI is present is read from the machine, not from a run:
+    // the page uses it to decide between "install" and "uninstall".
+    expect(typeof status.installed).toBe('boolean')
+  })
+
+  it('refuses to cancel a run that is not in flight', () => {
+    expect(cancelSetup('cn')).toBe(false)
+  })
+
+  it('reports the CLI build this plugin speaks, so a mismatch is visible early', () => {
+    // A session against the wrong CLI build dies with a bare exit code, so the
+    // page warns from this status before the user signs in. Both sides are read
+    // from disk; a machine without the CLI simply reports `installed: false`.
+    const status = readSetupStatus('cn')
+    expect(status.requiredCliVersion).toMatch(/^\d+\.\d+\.\d+/)
+    if (status.installed) {
+      expect(typeof status.cliVersion === 'string' || status.cliVersion === undefined).toBe(true)
+      expect(status.versionMismatch).toBe(
+        status.cliVersion === undefined ? undefined : status.cliVersion !== status.requiredCliVersion,
+      )
+    } else {
+      expect(status.cliVersion).toBeUndefined()
+      expect(status.versionMismatch).toBeUndefined()
+    }
   })
 
   const windows = process.platform === 'win32'

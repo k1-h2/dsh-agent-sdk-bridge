@@ -31,6 +31,16 @@ export interface UsageSnapshot {
     account?: AccountInfo;
     /** Why the quota is missing, in the CLI's own words. */
     error?: string;
+    /**
+     * Whether this edition's CLI is absent from the machine right now.
+     *
+     * The page keeps its last good reading visible while a refresh fails, which
+     * is right for a dropped network — but not after an uninstall: the account,
+     * plan and credits it shows belong to a CLI that is no longer installed.
+     * This flag tells the page to drop that reading instead of labelling it
+     * "last reading".
+     */
+    cliMissing?: boolean;
 }
 /** Cached quota reader for one brand. */
 export declare class QoderUsage {
@@ -54,5 +64,7 @@ export declare class QoderUsage {
     read(fresh?: boolean): Promise<UsageSnapshot>;
     /** Drop the cached reading. */
     invalidate(): void;
+    /** The reading for a machine whose CLI is not installed. */
+    private missingCli;
     private fetch;
 }
