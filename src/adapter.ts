@@ -782,6 +782,18 @@ export class QoderAdapter extends LlmAdapter {
     return pixels === 0 ? content.map(block => block.type === 'text' ? block.text : '').join('\n\n') : content
   }
 
+  /**
+   * Drop every warm inner session without unloading the plugin.
+   *
+   * Signing out has to invalidate them: each holds a CLI process that already
+   * loaded its credentials, so it would keep answering as the account that was
+   * just signed out. The next turn starts a fresh process, which then reports
+   * the signed-out state honestly.
+   */
+  closeSessions(): void {
+    this.sessions.closeAll()
+  }
+
   /** Tear down every warm inner session (plugin dispose). */
   close(): void {
     this.sessions.closeAll()

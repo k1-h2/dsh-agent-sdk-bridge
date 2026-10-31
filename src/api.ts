@@ -400,15 +400,19 @@ export async function handleApi(
           return
         }
         if (!isSetupMode(parsed.mode)) {
-          send(res, 400, { error: 'mode 只接受 configure、login、uninstall 或 cancel' })
+          send(res, 400, { error: 'mode 只接受 configure、login、logout、uninstall 或 cancel' })
           return
         }
         const qoder = adapters[postBrand] as QoderAdapter
-        const result = startSetup(postBrand, parsed.mode, code => {
-          if (code === 0) {
-            qoder.invalidateCatalog()
-            qoder.invalidateUsage()
-          }
+        const mode = parsed.mode
+        const result = startSetup(postBrand, mode, code => {
+          if (code !== 0) return
+          qoder.invalidateCatalog()
+          qoder.invalidateUsage()
+          // A warm session owns a CLI process that loaded its credentials at
+          // start-up; after a sign-out it would keep answering as the account
+          // that just left. Dropping them makes the next turn start clean.
+          if (mode === 'logout') qoder.closeSessions()
         })
         if (!result.started) {
           const status = result.reason === 'busy' ? 409 : result.reason === 'unsupported' ? 501 : 500

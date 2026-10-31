@@ -331,7 +331,7 @@ describe('settings API brand routing', () => {
     const qoderMode = response()
     await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'bogus' }), qoderMode.res, ADAPTERS)
     expect(qoderMode.status()).toBe(400)
-    expect(qoderMode.body().error).toBe('mode 只接受 configure、login、uninstall 或 cancel')
+    expect(qoderMode.body().error).toBe('mode 只接受 configure、login、logout、uninstall 或 cancel')
 
     const noBrand = response()
     await handleApi(request(`${API_PREFIX}/setup`, 'POST', { mode: 'install' }), noBrand.res, ADAPTERS)

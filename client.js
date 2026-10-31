@@ -91,6 +91,10 @@ window.__ModuleLoader__.load({
       cliCancel: '取消',
       cliCancelling: '正在取消…',
       cliCancelled: '已取消，可以重新操作',
+      cliLogout: '退出登录',
+      cliLogoutConfirm: '确定要退出当前 Qoder 账号吗？退出后会关闭已打开的会话并清空额度，需要重新登录才能继续使用；CLI 本身不会被卸载。',
+      cliLoggingOut: '正在退出登录…',
+      cliLogoutOk: '已退出登录',
       cliVersionMismatch: 'CLI 版本与插件不匹配：本机',
       cliVersionMismatchTail: '，插件需要',
       intlNav: 'Qoder 国际版',
@@ -121,6 +125,8 @@ window.__ModuleLoader__.load({
       usageUnknownPlan: '未知套餐',
       usageStale: '显示上次读数，刷新失败',
       usageCliMissing: '未检测到本机 CLI，安装并登录后才会显示额度。',
+      usageSignedOut: '已退出登录，重新登录后显示额度。',
+      modelsSignedOut: '已退出登录，重新登录后才会显示模型。',
       pluginOptionsTitle: '启用的版本',
       pluginOptionsHint: '关闭后，对应设置页、模型列表与模型分组都会移除；已保存的模型选择保留，重新打开即可恢复。',
       pluginOptionsOn: '显示中',
@@ -288,6 +294,10 @@ window.__ModuleLoader__.load({
       cliCancel: 'Cancel',
       cliCancelling: 'Cancelling…',
       cliCancelled: 'Cancelled — you can start again',
+      cliLogout: 'Sign out',
+      cliLogoutConfirm: 'Sign out of the current Qoder account? Open sessions will be closed and quota cleared; you will need to sign in again. The CLI itself stays installed.',
+      cliLoggingOut: 'Signing out…',
+      cliLogoutOk: 'Signed out',
       cliVersionMismatch: 'CLI version does not match the plugin: this machine has',
       cliVersionMismatchTail: 'but the plugin needs',
       intlNav: 'Qoder International',
@@ -318,6 +328,8 @@ window.__ModuleLoader__.load({
       usageUnknownPlan: 'Unknown plan',
       usageStale: 'Showing the last reading; refresh failed',
       usageCliMissing: 'This machine has no CLI for this edition; quota appears after it is installed and signed in.',
+      usageSignedOut: 'Signed out. Sign in again to see quota.',
+      modelsSignedOut: 'Signed out. Sign in again to see the models.',
       pluginOptionsTitle: 'Enabled editions',
       pluginOptionsHint: 'Turning one off removes its settings page, model list, and model group. Saved model choices are kept, so turning it back on restores them.',
       pluginOptionsOn: 'Shown',
@@ -890,13 +902,16 @@ window.__ModuleLoader__.load({
      * upgrade/usage links. It is fetched from the host (which asks the CLI), not
      * from the provider directly, because only the CLI holds a usable token.
      */
-    function UsageCard({ t, brand, refreshSignal }) {
+    function UsageCard({ t, brand, refreshSignal, resetSignal }) {
       const [snapshot, setSnapshot] = useState(() => readCache(brand.id, 'usage'))
       const [failure, setFailure] = useState(undefined)
       const [busy, setBusy] = useState(false)
       /** The CLI is not installed: show that, and never any cached numbers. */
       const [missing, setMissing] = useState(false)
+      /** The user just signed out from this page: no reading is expected. */
+      const [signedOut, setSignedOut] = useState(false)
       const ticket = useRef(0)
+      const lastReset = useRef(resetSignal)
 
       const load = useCallback(async (fresh = false) => {
         const mine = ++ticket.current
@@ -913,6 +928,7 @@ window.__ModuleLoader__.load({
             clearCache(brand.id, 'usage')
             setSnapshot(undefined)
             setMissing(true)
+            setSignedOut(false)
             setFailure(String(payload.error ?? t('usageCliMissing')))
             return
           }
@@ -924,6 +940,7 @@ window.__ModuleLoader__.load({
             return
           }
           setMissing(false)
+          setSignedOut(false)
           setSnapshot(payload)
           writeCache(brand.id, 'usage', payload)
         } catch (err) {
@@ -937,6 +954,23 @@ window.__ModuleLoader__.load({
       // `refreshSignal` changes after a CLI install or uninstall, both of which
       // make the cached account reading describe a machine state that is gone.
       useEffect(() => { void load() }, [load, refreshSignal])
+
+      // A sign-out makes the stored reading describe an account that is no
+      // longer signed in — the same lie the uninstall case told. `resetSignal`
+      // changes only for that action, so an ordinary refresh keeps its
+      // stale-while-revalidate behaviour.
+      useEffect(() => {
+        if (lastReset.current === resetSignal) return
+        lastReset.current = resetSignal
+        clearCache(brand.id, 'usage')
+        setSnapshot(undefined)
+        setMissing(false)
+        setFailure(undefined)
+        // Do not fetch: the CLI has just been signed out, so a read would only
+        // produce an authentication error that looks like a malfunction. The
+        // refresh button and the next sign-in both still work.
+        setSignedOut(true)
+      }, [resetSignal, brand.id])
 
       const usage = snapshot?.usage
       const account = snapshot?.account
@@ -965,9 +999,11 @@ window.__ModuleLoader__.load({
           // state any more.
           missing
             ? h('div', { style: css.note }, error ?? t('usageCliMissing'))
-            : error === undefined
-              ? h('div', { style: css.note }, t('usageLoading'))
-              : h('div', { style: css.err }, `${t('usageUnavailable')}：${error}`),
+            : signedOut
+              ? h('div', { style: css.note }, t('usageSignedOut'))
+              : error === undefined
+                ? h('div', { style: css.note }, t('usageLoading'))
+                : h('div', { style: css.err }, `${t('usageUnavailable')}：${error}`),
           error === undefined
             ? null
             : h('div', { style: css.bar },
@@ -1789,6 +1825,9 @@ window.__ModuleLoader__.load({
       const [onlyEnabled, setOnlyEnabled] = useState(false)
       const [showAdvanced, setShowAdvanced] = useState(false)
       const [usageTick, setUsageTick] = useState(0)
+      // Bumped only by a successful sign-out: the quota card must drop its
+      // stored account rather than label it "last reading".
+      const [usageReset, setUsageReset] = useState(0)
       const ticket = useRef(0)
       /** Separate from `ticket`: `load()` bumps that one, so sharing it would
        *  make every write look stale the moment its own refresh landed. */
@@ -2168,15 +2207,34 @@ window.__ModuleLoader__.load({
       // and the host has already dropped its cached answers for that case.
       useEffect(() => {
         if (setupCode !== 0) return
+        if (setup?.mode === 'logout') {
+          // Signing out invalidates the account itself, not just its freshness:
+          // the stored catalog and quota were read through credentials that no
+          // longer exist. Drop both instead of refetching — a read now would
+          // only fail with an authentication error that looks like a fault.
+          clearCache(brand.id, modelsKind)
+          setModels([])
+          setCatalogNotice(t('modelsSignedOut'))
+          setSignedIn(regional ? false : undefined)
+          setUsageReset(value => value + 1)
+          return
+        }
         void load(true)
         setUsageTick(value => value + 1)
-      }, [setupCode, setupFinishedAt, load])
+      }, [setupCode, setupFinishedAt, setup?.mode, load, brand.id, modelsKind, regional, t])
 
       /** Ask before running the destructive CLI action. */
       const uninstallCli = useCallback(() => {
         if (typeof window.confirm !== 'function') return
         if (!window.confirm(t('cliUninstallConfirm'))) return
         void startCliSetup('uninstall')
+      }, [startCliSetup, t])
+
+      /** Signing out is reversible, but it clears the account and quota. */
+      const logoutCli = useCallback(() => {
+        if (typeof window.confirm !== 'function') return
+        if (!window.confirm(t('cliLogoutConfirm'))) return
+        void startCliSetup('logout')
       }, [startCliSetup, t])
 
       useEffect(() => {
@@ -2327,7 +2385,7 @@ window.__ModuleLoader__.load({
         h('p', { style: css.intro }, t(brand.introKey)),
         regional
           ? authCard
-          : h(UsageCard, { t, brand, refreshSignal: usageTick }),
+          : h(UsageCard, { t, brand, refreshSignal: usageTick, resetSignal: usageReset }),
 
         // Search row: the field grows, the checkbox sits beside it.
         h('div', { style: css.bar },
@@ -2392,6 +2450,9 @@ window.__ModuleLoader__.load({
               ? h('button', { style: css.btn, disabled: setupRunning, onClick: () => void startCliSetup('login') }, t('cliLogin'))
               : null,
             cliInstalled
+              ? h('button', { style: css.btn, disabled: setupRunning, onClick: logoutCli }, t('cliLogout'))
+              : null,
+            cliInstalled
               ? h('button', { style: { ...css.btn, ...css.btnAlert }, disabled: setupRunning, onClick: uninstallCli }, t('cliUninstall'))
               : null,
             // The login step waits for a browser callback; closing that tab
@@ -2407,13 +2468,17 @@ window.__ModuleLoader__.load({
               ? h('button', { style: css.btn, onClick: () => setLogOpen(value => !value) }, logOpen ? t('cliHideLog') : t('cliShowLog'))
               : null,
             h('span', { style: css.count }, setupRunning
-              ? (setup?.mode === 'uninstall' ? t('cliUninstalling') : t('cliRunning'))
+              ? (setup?.mode === 'uninstall'
+                  ? t('cliUninstalling')
+                  : setup?.mode === 'logout' ? t('cliLoggingOut') : t('cliRunning'))
               : setupError !== undefined
                 ? setupError
                 : setupCancelled
                   ? t('cliCancelled')
                   : setupCode === 0
-                    ? (setup?.mode === 'uninstall' ? t('cliUninstallOk') : t('cliExitOk'))
+                    ? (setup?.mode === 'uninstall'
+                        ? t('cliUninstallOk')
+                        : setup?.mode === 'logout' ? t('cliLogoutOk') : t('cliExitOk'))
                     : setupCode === undefined || setupCode === null
                       ? ''
                       : `${t('cliExitFail')} ${setupCode}`),

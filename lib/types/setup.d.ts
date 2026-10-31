@@ -21,8 +21,8 @@ import type { QoderBrand } from './brand.ts';
 export declare const SCRIPT_NAME = "setup-qoderclicn.bat";
 /** The helper script for one edition. */
 export declare function scriptNameOf(brand: QoderBrand): string;
-/** What the page may ask for: install/sign in, only sign in, or uninstall. */
-export type SetupMode = 'configure' | 'login' | 'uninstall';
+/** What the page may ask for: install/sign in, only sign in, sign out, uninstall. */
+export type SetupMode = 'configure' | 'login' | 'logout' | 'uninstall';
 /** Whether a value is one of the modes the page may request. */
 export declare function isSetupMode(value: unknown): value is SetupMode;
 /** Snapshot the page polls. Always safe to render; empty before the first run. */

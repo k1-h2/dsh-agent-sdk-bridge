@@ -35,6 +35,7 @@ describe('setup helper', () => {
   it('accepts only the modes it can name a flag for', () => {
     expect(isSetupMode('configure')).toBe(true)
     expect(isSetupMode('login')).toBe(true)
+    expect(isSetupMode('logout')).toBe(true)
     expect(isSetupMode('uninstall')).toBe(true)
     for (const value of [undefined, null, '', 'CONFIGURE', '--gui', 'check', '--check', 'install && calc', {}]) {
       expect(isSetupMode(value)).toBe(false)

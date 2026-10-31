@@ -290,6 +290,15 @@ export declare class QoderAdapter extends LlmAdapter {
      * still knows the attachment was there.
      */
     private buildFeed;
+    /**
+     * Drop every warm inner session without unloading the plugin.
+     *
+     * Signing out has to invalidate them: each holds a CLI process that already
+     * loaded its credentials, so it would keep answering as the account that was
+     * just signed out. The next turn starts a fresh process, which then reports
+     * the signed-out state honestly.
+     */
+    closeSessions(): void;
     /** Tear down every warm inner session (plugin dispose). */
     close(): void;
 }

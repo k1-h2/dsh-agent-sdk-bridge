@@ -22,6 +22,7 @@ set "PKG=@qodercn-ai/qoderclicn"
 set "MODE=setup"
 if /I "%~1"=="--check" set "MODE=check"
 if /I "%~1"=="--login" set "MODE=login"
+if /I "%~1"=="--logout" set "MODE=logout"
 if /I "%~1"=="--uninstall" set "MODE=uninstall"
 if /I "%~1"=="/?"      goto :usage
 
@@ -29,13 +30,16 @@ echo.
 echo  ==============================================================
 if "%MODE%"=="check" echo   Qoder CN CLI - check only, nothing installed or changed
 if "%MODE%"=="login" echo   Qoder CN CLI - re-login only, nothing installed
+if "%MODE%"=="logout" echo   Qoder CN CLI - sign out (removes the saved credential)
 if "%MODE%"=="setup" echo   Qoder CN CLI - install and sign-in wizard
 if "%MODE%"=="uninstall" echo   Qoder CN CLI - remove the global CLI package
 echo  ==============================================================
 
 rem ---------------------------------------------------------------- 1 node
 echo.
-echo [1/5] Node.js and npm
+if "%MODE%"=="logout" echo [1/3] Node.js and npm
+if "%MODE%"=="uninstall" echo [1/3] Node.js and npm
+if not "%MODE%"=="logout" if not "%MODE%"=="uninstall" echo [1/5] Node.js and npm
 where node >nul 2>nul
 if errorlevel 1 (
     echo       [X] node not found. Install Node.js LTS first:
@@ -57,6 +61,7 @@ for /f "delims=" %%P in ('npm config get prefix 2^>nul') do set "NPREFIX=%%P"
 if defined NPREFIX set "PATH=%NPREFIX%;%PATH%"
 
 if "%MODE%"=="uninstall" goto :uninstall
+if "%MODE%"=="logout" goto :logout
 
 rem ------------------------------------------------------------- 2 detect
 echo.
@@ -229,7 +234,7 @@ goto :done
 
 :uninstall
 echo.
-echo [1/2] Uninstall %PKG%
+echo [2/3] Uninstall %PKG%
 call npm uninstall -g "%PKG%"
 if errorlevel 1 (
     echo       [X] npm uninstall failed.
@@ -242,7 +247,7 @@ rem npm leaves the scope directory and the shims behind, and both the
 rem plugin's CLI lookup and the page's "installed?" badge read them. Clearing
 rem them here is what actually makes the page switch back to "install".
 echo.
-echo [2/2] Clean leftovers
+echo [3/3] Clean leftovers
 if exist "%APPDATA%\npm\node_modules\@qodercn-ai\qoderclicn" rd /s /q "%APPDATA%\npm\node_modules\@qodercn-ai\qoderclicn" 2>nul
 dir /b "%APPDATA%\npm\node_modules\@qodercn-ai" 2>nul | findstr /r "." >nul
 if errorlevel 1 rd /s /q "%APPDATA%\npm\node_modules\@qodercn-ai" 2>nul
@@ -253,6 +258,54 @@ echo.
 echo  ==============================================================
 echo   Uninstalled. Sign-in files under %USERPROFILE%\.qoder-cn are kept;
 echo   run this script again without --uninstall to reinstall and sign in.
+echo  ==============================================================
+goto :done
+
+:logout
+echo.
+echo [2/3] Find the CLI
+set "QCMD="
+for /f "delims=" %%P in ('where qoderclicn.cmd 2^>nul') do if not defined QCMD set "QCMD=%%P"
+if not defined QCMD if exist "%APPDATA%\\npm\\qoderclicn.cmd" set "QCMD=%APPDATA%\\npm\\qoderclicn.cmd"
+if not defined QCMD (
+    echo       [X] qoderclicn is not installed, so there is no sign-in to clear.
+    echo           Run this script without an argument to install it.
+    goto :fail
+)
+echo       [OK] !QCMD!
+
+rem The CLI has no logout subcommand: its only credential is the encrypted
+rem ~/.qoder-cn/.auth/user file, and a fresh process with that file gone reports
+rem no Username. machine_id stays, because it identifies this machine rather
+rem than the account.
+echo.
+echo [3/3] Remove the saved sign-in
+set "AUTH=%USERPROFILE%\\.qoder-cn\\.auth\\user"
+if exist "%AUTH%" (
+    del /q "%AUTH%" 2>nul
+    if exist "%AUTH%" (
+        echo       [X] could not remove %AUTH%
+        echo           Close DSH and any running qoderclicn, then try again.
+        goto :fail
+    )
+    echo       [OK] saved credential removed
+) else (
+    echo       [--] no saved credential found; nothing to remove
+)
+set "ST=%TEMP%\\setup-qoderclicn-status.txt"
+call "!QCMD!" status > "%ST%" 2>&1
+findstr /I /C:"Username" "%ST%" >nul 2>nul
+if not errorlevel 1 (
+    echo       [X] the CLI still reports a signed-in user.
+    echo           Close DSH and try again; if it persists, remove
+    echo           %AUTH% by hand.
+    goto :fail
+)
+echo       [OK] signed out; the next login asks for a fresh browser sign-in
+echo.
+echo  ==============================================================
+echo   You are signed out of Qoder CN. Quota is cleared and open
+echo   sessions were closed; sign in again from the page to continue.
 echo  ==============================================================
 goto :done
 
@@ -270,6 +323,7 @@ echo.
 echo   setup-qoderclicn.bat            install what is missing, then sign in
 echo   setup-qoderclicn.bat --check    verify only: version / sign-in / dirs / models
 echo   setup-qoderclicn.bat --login    re-open the browser sign-in, install nothing
+echo   setup-qoderclicn.bat --logout   sign out, removing the saved credential
 echo   setup-qoderclicn.bat --gui      as above but never pauses, for the DSH page
 echo   setup-qoderclicn.bat --uninstall  remove the global CLI package
 echo   setup-qoderclicn.bat /?         this help

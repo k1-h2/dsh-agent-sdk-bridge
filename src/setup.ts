@@ -35,19 +35,20 @@ export function scriptNameOf(brand: QoderBrand): string {
   return brandProfile(brand).setupScript ?? SCRIPT_NAME
 }
 
-/** What the page may ask for: install/sign in, only sign in, or uninstall. */
-export type SetupMode = 'configure' | 'login' | 'uninstall'
+/** What the page may ask for: install/sign in, only sign in, sign out, uninstall. */
+export type SetupMode = 'configure' | 'login' | 'logout' | 'uninstall'
 
 /** The one command-line flag each mode maps to. Never a user-supplied string. */
 const FLAGS: Record<SetupMode, string> = {
   configure: '--gui',
   login: '--login',
+  logout: '--logout',
   uninstall: '--uninstall',
 }
 
 /** Whether a value is one of the modes the page may request. */
 export function isSetupMode(value: unknown): value is SetupMode {
-  return value === 'configure' || value === 'login' || value === 'uninstall'
+  return value === 'configure' || value === 'login' || value === 'logout' || value === 'uninstall'
 }
 
 /** Cap on kept output, so a chatty `npm install` cannot grow without bound. */
@@ -165,7 +166,9 @@ export function startSetup(
   }
   if (process.platform !== 'win32') {
     const command = brandProfile(brand).cliCommands[0]
-    const action = mode === 'uninstall' ? '卸载' : '配置'
+    const action = mode === 'uninstall'
+      ? '卸载'
+      : mode === 'logout' ? '退出登录' : mode === 'login' ? '重新登录' : '配置'
     return {
       started: false,
       reason: 'unsupported',

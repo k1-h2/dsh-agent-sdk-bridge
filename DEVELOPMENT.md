@@ -33,6 +33,12 @@
   读包自己的 `package.json`（`main`/`bin`），并把 Windows 的 `<node>/node_modules` 与 unix 的
   `<prefix>/lib/node_modules` 都当作全局根。只猜 `bundle/` 会把已安装的 CLI 判成未安装，
   页面就一直要你「再装一次」。
+- **退出登录要清凭据并关会话**：Qoder CLI 没有 `logout` 子命令，登录态只保存在加密的
+  `~/.qoder-cn/.auth/user`（国际版 `~/.qoder/.auth/user`）；`machine_id` 属于机器而不是账号，保留。
+  两个 `setup-*.bat` 的 `--logout` 删除该文件后再跑一次 `status`，确认不再打印 `Username`；
+  `POST /setup {mode:'logout'}` 成功后调用 `closeSessions()`，因为热会话里的 CLI 进程在启动时
+  已加载旧凭据，不关掉就会继续以刚退出的账号作答。页面同时清空额度缓存（`resetSignal`），
+  避免旧账号的积分继续显示。
 - **卸载要清干净**：npm 只删包，会留下空的 `node_modules/@qoder-ai`（或 `@qodercn-ai`）目录和
   `qodercli.cmd`/`.ps1` 之类 shim，而 CLI 查找和页面的「已安装」徽标读的正是这些。两个
   `setup-*.bat` 的 `--uninstall` 会在 `npm uninstall -g` 之后删掉 shim 与空 scope 目录，
