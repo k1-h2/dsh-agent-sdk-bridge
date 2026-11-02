@@ -114,6 +114,25 @@ CodeBuddy 那句显眼的报错。现在两条路径共用 `HostToolRegistry`，
 在 spawn 时刻用真实 MCP client 读 `tools/list`，并在摘掉 `prepare()` 的树上验证过是红的
 （「空首轮 + 之后才出现的工具」那条尤其依赖它）。
 
+**CodeBuddy 报 `unknown tool "mcp__dsh_host__edit"` 后又说 `Tool "mcp__dsh_host__mcp__dsh_host__edit" does not exist in the current tool set.`？**
+已修复。这两句其实是**同一个 bug 的两面**，出自两个不同的地方：第一句是 **DSH** 的
+`dsh-tools`（`ToolNotFoundError`，宿主的工具表里没有这个名字），第二句是 **CodeBuddy CLI**
+自己合成的（MCP server 里没有这个名字）。模型就是在两个错误之间来回猜拼写。
+
+根因是工具名前缀只剥了**一层**。模型偶尔会发出一个已经带前缀的名字，CLI 又加了一层前缀，
+于是处理器收到 `mcp__dsh_host__mcp__dsh_host__edit`；旧实现 `slice` 一次后交给宿主
+`mcp__dsh_host__edit`——宿主的工具叫 `edit`，所以 DSH 回 `unknown tool "mcp__dsh_host__edit"`；
+模型照着这个错误改成双重拼写重试，CLI 又不认，回第二句。**一个名字剥到底就都对了。**
+
+现在 `src/mcp-naming.ts` 的 `stripMcpNamespace()` 会把每一层前缀都剥掉（并设有 8 层上限，
+纯粹由前缀组成的名字返回 null 而不是把前缀当工具名），CodeBuddy / Qoder / MiniMax 三条路径
+共用它，不再各写一份一层 `slice`。判据是 `test/mcp-naming.test.ts`，其中「双层前缀剥到
+`edit`」和「三家一致」两条在单层剥离下确认过是红的。
+
+顺带一提：同一张截图里的 `cannot modify "…": file has not been read — read the file, then retry`
+是**另一回事**——那是 DSH 的 `dsh-tool-fs` 观测策略（`FS_NOT_OBSERVED`），要求改之前先读；
+它属于宿主侧的正常门禁，跟工具注册无关。模型当时也注意到了这一点（它说「要先 read」）。
+
 **Qoder 的上下文环为什么也会小幅跳一下（比如从 60% 掉到 20% 又涨回来）？** 因为分母曾经会
 短暂变成 200K。Qoder 的 `context_usage_ratio` 按「CLI 实际运行的窗口」算，DSH 又用适配器上报的
 窗口当分母；目录里 `dfmodel` 等模型其实声明了 `[200K, 400K, 1M]`，你选 1M 是上游支持的。旧代码

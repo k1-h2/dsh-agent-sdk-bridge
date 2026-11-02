@@ -40,6 +40,7 @@ import type { MinimaxRegion } from './brand.ts'
 import { minimaxCliRegion } from './brand.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
+import { stripMcpNamespace } from './mcp-naming.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from './minimax-cli.ts'
 import { estimateTextTokens } from './tokens.ts'
 
@@ -187,15 +188,19 @@ const HOST_TOOL_PREFIXES = [`mcp__${MINIMAX_MCP_SERVER}__`, `mcp__${MINIMAX_MCP_
 
 /** Whether a CLI tool name belongs to this plugin's MCP server. */
 export function isHostMcpTool(name: string): boolean {
-  return HOST_TOOL_PREFIXES.some(prefix => name.startsWith(prefix))
+  return stripMcpNamespace(name, HOST_TOOL_PREFIXES) !== null
 }
 
-/** The host-side name of an MCP tool, without the namespace. */
+/**
+ * The host-side name of an MCP tool, without any namespace layer.
+ *
+ * Every layer is peeled, not just one: a model that emits an already-qualified
+ * name has it qualified again by the CLI, and handing the host
+ * `mcp__dsh-host__edit` made DSH answer `unknown tool` even though the tool was
+ * registered under `edit`. See {@link stripMcpNamespace}.
+ */
 export function hostMcpToolName(name: string): string {
-  for (const prefix of HOST_TOOL_PREFIXES) {
-    if (name.startsWith(prefix)) return name.slice(prefix.length)
-  }
-  return name
+  return stripMcpNamespace(name, HOST_TOOL_PREFIXES) ?? name
 }
 
 /** Thinking-effort values an ACP config option advertises, minus `default`. */

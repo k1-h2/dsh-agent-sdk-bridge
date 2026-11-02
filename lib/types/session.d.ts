@@ -325,7 +325,8 @@ export declare function meteredUsage(real: SdkUsage | undefined, reasoning: (met
 }): TokenUsage | undefined;
 /**
  * The host tool runtime dispatches by the bare host name; the inner model
- * only ever sees the namespaced MCP form, so strip the prefix on the way out.
+ * only ever sees the namespaced MCP form, so strip every prefix layer on the
+ * way out. See {@link stripMcpNamespace} for why one layer is not enough.
  */
 export declare function hostToolName(name: string): string;
 /** Deny native tools, allow this adapter's MCP tools. */

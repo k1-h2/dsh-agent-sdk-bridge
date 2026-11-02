@@ -26,6 +26,7 @@ import type { CodeBuddySavedUser } from './codebuddy-state.ts'
 import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
+import { stripMcpNamespace } from './mcp-naming.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from './sdk.ts'
 
 /**
@@ -88,17 +89,26 @@ const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
  * `Bash`. The Qoder CLI keeps the hyphen, so both spellings are accepted.
  */
 const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')}__`
+/** Both spellings, in the order the shared stripper tries them. */
+const HOST_TOOL_PREFIXES = [MCP_TOOL_PREFIX, MCP_TOOL_PREFIX_SANITIZED]
 
 /** Whether a CLI tool name belongs to this plugin's MCP server. */
 export function isHostTool(toolName: string): boolean {
-  return toolName.startsWith(MCP_TOOL_PREFIX) || toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)
+  return stripMcpNamespace(toolName, HOST_TOOL_PREFIXES) !== null
 }
 
-/** The host-side tool name, with the MCP namespace removed. */
+/**
+ * The host-side tool name, with every MCP namespace layer removed.
+ *
+ * CodeBuddy qualifies an already-qualified name again, so the handler can be
+ * handed `mcp__dsh_host__mcp__dsh_host__edit`. Stripping one layer produced
+ * `mcp__dsh_host__edit`, a name the host does not have (its tool is `edit`), and
+ * DSH answered `unknown tool "mcp__dsh_host__edit"`; the model retried the
+ * doubled spelling next round and the CLI rejected it with `does not exist in
+ * the current tool set`. See {@link stripMcpNamespace}.
+ */
 export function hostToolName(toolName: string): string {
-  if (toolName.startsWith(MCP_TOOL_PREFIX)) return toolName.slice(MCP_TOOL_PREFIX.length)
-  if (toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)) return toolName.slice(MCP_TOOL_PREFIX_SANITIZED.length)
-  return toolName
+  return stripMcpNamespace(toolName, HOST_TOOL_PREFIXES) ?? toolName
 }
 
 /** One model as the settings page and the adapter see it. */

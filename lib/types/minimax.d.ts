@@ -142,7 +142,14 @@ export declare function minimaxAuthStatePath(region: MinimaxRegion): string;
 export declare function minimaxCliCommand(): string;
 /** Whether a CLI tool name belongs to this plugin's MCP server. */
 export declare function isHostMcpTool(name: string): boolean;
-/** The host-side name of an MCP tool, without the namespace. */
+/**
+ * The host-side name of an MCP tool, without any namespace layer.
+ *
+ * Every layer is peeled, not just one: a model that emits an already-qualified
+ * name has it qualified again by the CLI, and handing the host
+ * `mcp__dsh-host__edit` made DSH answer `unknown tool` even though the tool was
+ * registered under `edit`. See {@link stripMcpNamespace}.
+ */
 export declare function hostMcpToolName(name: string): string;
 /** The model config option's values as rows. */
 export declare function minimaxModelsFromConfigOptions(options: readonly any[] | null | undefined): MinimaxModel[];

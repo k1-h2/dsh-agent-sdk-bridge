@@ -23,6 +23,7 @@ import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions
 import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
+import { stripMcpNamespace } from './mcp-naming.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from './render.ts'
 import { isDaemonConflict, loadSdk, probeDaemon, resetSdk } from './sdk.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
@@ -526,10 +527,11 @@ export function meteredUsage(
 
 /**
  * The host tool runtime dispatches by the bare host name; the inner model
- * only ever sees the namespaced MCP form, so strip the prefix on the way out.
+ * only ever sees the namespaced MCP form, so strip every prefix layer on the
+ * way out. See {@link stripMcpNamespace} for why one layer is not enough.
  */
 export function hostToolName(name: string): string {
-  return name.startsWith(MCP_TOOL_PREFIX) ? name.slice(MCP_TOOL_PREFIX.length) : name
+  return stripMcpNamespace(name, [MCP_TOOL_PREFIX]) ?? name
 }
 
 /** Deny native tools, allow this adapter's MCP tools. */
