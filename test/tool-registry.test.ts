@@ -23,11 +23,12 @@
  * client, so they fail on the actual transport contract rather than on a mock
  * that agrees with whatever the implementation does.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 const mcp = await import('@modelcontextprotocol/sdk/server/mcp.js')
 const clientModule = await import('@modelcontextprotocol/sdk/client/index.js')
 const inMemory = await import('@modelcontextprotocol/sdk/inMemory.js')
+const { createSdkMcpServer: createQoderMcpServer } = await import('@qodercn-ai/qodercn-agent-sdk')
 const { z } = await import('zod')
 
 const { HostToolRegistry } = await import('../src/session.ts')
@@ -169,10 +170,102 @@ describe('bare host tool names', () => {
     // round. This pins the naming table the session matches on, because getting
     // it wrong is what turns a working tool into "does not exist".
     const { isHostTool, hostToolName } = await import('../src/codebuddy.ts')
-    void vi
     expect(isHostTool('mcp__dsh_host__ops_edit_file')).toBe(true)
     expect(isHostTool('mcp__dsh-host__ops_edit_file')).toBe(true)
     expect(hostToolName('mcp__dsh_host__ops_edit_file')).toBe('ops_edit_file')
     expect(hostToolName('mcp__dsh-host__ops_edit_file')).toBe('ops_edit_file')
+  })
+
+  it('matches on the namespace, not on any specific tool', async () => {
+    // `ops_edit` is not a host tool — `dsh-ops` publishes `ops_edit_file` — yet
+    // it still passes the host-tool check, because the check is a prefix test.
+    // A model that invents the shorter name therefore gets a real host round
+    // whose answer is "no such tool", rather than the CLI refusing it before the
+    // host ever saw it. Pinned so nobody mistakes that wording for this bug.
+    const { isHostTool, hostToolName } = await import('../src/codebuddy.ts')
+    expect(isHostTool('mcp__dsh_host__ops_edit')).toBe(true)
+    expect(hostToolName('mcp__dsh_host__ops_edit')).toBe('ops_edit')
+  })
+})
+
+describe('Qoder path', () => {
+  /**
+   * The Qoder SDK's own factory, driving the exact shape the bridge uses.
+   *
+   * Both brands build the server as `createSdkMcpServer({ name, tools: [] })`
+   * and register host tools afterwards, and the Qoder factory declares
+   * `capabilities: { tools: tools.length > 0 ? {} : undefined }` — so an empty
+   * first turn produces a server with no tools capability at all, exactly like
+   * CodeBuddy's. Qoder was saved from the reported symptom only by ordering:
+   * `ensureTools()` runs before `ensureStarted()` spawns the CLI, so in the
+   * common case at least one tool was registered pre-connect and the SDK
+   * installed its handlers then. The hole was never closed, only not stepped in
+   * — and the add-only replay below was broken on Qoder from the start.
+   */
+  async function qoderPair(prepare: boolean): Promise<{ instance: any, client: InstanceType<typeof clientModule.Client> }> {
+    const server = createQoderMcpServer({ name: 'dsh-host', tools: [] })
+    const registry = new HostToolRegistry(server.instance as never, () => async () => ({ content: [] }))
+    if (prepare) registry.prepare()
+    const [clientTransport, serverTransport] = inMemory.InMemoryTransport.createLinkedPair()
+    const client = new clientModule.Client({ name: 'qodercli', version: '1' })
+    await Promise.all([client.connect(clientTransport), server.instance.connect(serverTransport)])
+    return { instance: server.instance, client }
+  }
+
+  it('connects with no tools capability when its first turn had no host tools', async () => {
+    const { instance, client } = await qoderPair(false)
+    // The pre-fix outcome for a tool-less first turn: the CLI cannot read the
+    // list, and nothing can ever be added afterwards.
+    await expect(client.listTools()).rejects.toThrow(/Method not found/)
+    expect(() => instance.registerTool('ops_bash', { description: 'd', inputSchema: { command: z.string() } }, async () => ({ content: [] })))
+      .toThrow(/Cannot register capabilities after connecting/)
+    await client.close()
+  })
+
+  it('serves a tool the host only offers after the CLI started', async () => {
+    const { instance, client } = await qoderPair(true)
+    expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true })
+    expect((await client.listTools()).tools).toEqual([])
+
+    // The same `ensureTools()` call the adapter makes on every turn.
+    new HostToolRegistry(instance as never, () => async () => ({ content: [] })).reconcile([bash])
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['ops_bash'])
+    await client.close()
+  })
+
+  it('replaces a changed schema the add-only replay left stale', async () => {
+    const { instance, client } = await qoderPair(true)
+    const registry = new HostToolRegistry(instance as never, () => async () => ({ content: [] }))
+    registry.reconcile([bash])
+
+    // What the old loop did with a second definition of a name it already held:
+    // `registerTool` throws `Tool ops_bash is already registered`, the
+    // `catch { continue }` swallowed it, and the model kept the first schema for
+    // the rest of the session — so a parameter the host added mid-conversation
+    // was invisible, and any call using it failed validation upstream.
+    expect(() => instance.registerTool('ops_bash', { description: 'd', inputSchema: { command: z.string() } }, async () => ({ content: [] })))
+      .toThrow(/already registered/)
+
+    const widened = { ...bash, parameters: { type: 'object', properties: { command: { type: 'string' }, workdir: { type: 'string' } } } }
+    registry.reconcile([widened])
+    const listed = (await client.listTools()).tools.find(tool => tool.name === 'ops_bash')
+    expect(Object.keys(listed?.inputSchema.properties ?? {})).toEqual(['command', 'workdir'])
+    await client.close()
+  })
+
+  it('withdraws a tool the host took away', async () => {
+    const { instance, client } = await qoderPair(true)
+    const registry = new HostToolRegistry(instance as never, () => async () => ({ content: [] }))
+    registry.reconcile([bash, editFile])
+    expect((await client.listTools()).tools.map(tool => tool.name).sort()).toEqual(['ops_bash', 'ops_edit_file'])
+
+    // A `dsh-ops` mode switch drops `ops_bash`. Without the removal the model
+    // could still call it, the bridge would park its handler waiting for a host
+    // answer that can never come, and the turn would stall until the boundary
+    // settled it — the other face of the same missing reconciliation.
+    registry.reconcile([editFile])
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['ops_edit_file'])
+    expect(registry.names()).toEqual(['ops_edit_file'])
+    await client.close()
   })
 })

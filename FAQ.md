@@ -103,6 +103,17 @@ bearer token，只留在本机，请不要分享或提交到仓库。从旧版�
 判据是 `test/tool-registry.test.ts`：它用真实的 `@modelcontextprotocol/sdk` 跑一个真实的
 client/server 对，钉住连接前的能力声明、以及工具集的增/改/删。
 
+**Qoder 有没有同样的问题？** 有，只是平时看不出来。Qoder 的 SDK 工厂同样是
+`createSdkMcpServer({ name, tools: [] })`，能力声明写的是
+`tools: tools.length > 0 ? {} : undefined`——空表首轮连上去同样是「没有 tools 能力」。
+它侥幸没出事只因为调用顺序：`ensureTools()` 在 CLI 启动**之前**跑，首轮只要有任意一个工具，
+SDK 就会在安装处理器时顺手把能力声明补上。第二层缺陷（只增不改不删）则一直都在：模式切换后
+schema 停在旧定义、宿主撤下的工具仍然可调，只是表现成「参数不认」和「unknown tool」，而不是
+CodeBuddy 那句显眼的报错。现在两条路径共用 `HostToolRegistry`，`prepare()` 在 `connect()`
+之前无条件声明能力。判据是 `test/qoder-session-tools.test.ts`：它构造真实的 `QoderSession`，
+在 spawn 时刻用真实 MCP client 读 `tools/list`，并在摘掉 `prepare()` 的树上验证过是红的
+（「空首轮 + 之后才出现的工具」那条尤其依赖它）。
+
 **Qoder 的上下文环为什么也会小幅跳一下（比如从 60% 掉到 20% 又涨回来）？** 因为分母曾经会
 短暂变成 200K。Qoder 的 `context_usage_ratio` 按「CLI 实际运行的窗口」算，DSH 又用适配器上报的
 窗口当分母；目录里 `dfmodel` 等模型其实声明了 `[200K, 400K, 1M]`，你选 1M 是上游支持的。旧代码
