@@ -29,6 +29,12 @@ export declare class QoderModelCatalog {
     /** Why the last refresh failed, for the settings page's guidance. */
     private failure;
     /**
+     * Bumped by {@link invalidate}. A fetch that started before a sign-in carries
+     * the previous account's entries, so it must not republish them after the
+     * cache was dropped for that account change.
+     */
+    private epoch;
+    /**
      * @param brand - which edition's CLI answers.
      * @param ttlMs - how long a fetched catalog stays fresh before a re-fetch.
      *   Read per use, so a settings edit takes effect on the next read.

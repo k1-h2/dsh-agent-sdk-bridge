@@ -35,10 +35,12 @@
   页面就一直要你「再装一次」。
 - **退出登录要清凭据并关会话**：Qoder CLI 没有 `logout` 子命令，登录态只保存在加密的
   `~/.qoder-cn/.auth/user`（国际版 `~/.qoder/.auth/user`）；`machine_id` 属于机器而不是账号，保留。
-  两个 `setup-*.bat` 的 `--logout` 删除该文件后再跑一次 `status`，确认不再打印 `Username`；
-  `POST /setup {mode:'logout'}` 成功后调用 `closeSessions()`，因为热会话里的 CLI 进程在启动时
-  已加载旧凭据，不关掉就会继续以刚退出的账号作答。页面同时清空额度缓存（`resetSignal`），
-  避免旧账号的积分继续显示。
+  两个 `setup-*.bat` 的 `--logout` 删除该文件后再跑一次 `status`，确认不再打印 `Username`。
+  **登录和退出都必须调 `resetAccount()`**：它关掉热会话、清空目录与额度缓存，并且
+  `discardSdk()` 停掉当前 daemon 后强制下一读加载新实例。daemon 的凭据不在
+  `configurationSignature()` 里（`auth.type === 'qodercli'` 恒等），所以换号后签名不变；
+  只关会话不换 daemon，额度卡和后续回合仍会以旧账号作答，直到进程重启。页面的
+  `resetSignal` 只在退出时清掉本地额度快照，登录后的正确性依赖服务端这次重读。
 - **卸载要清干净**：npm 只删包，会留下空的 `node_modules/@qoder-ai`（或 `@qodercn-ai`）目录和
   `qodercli.cmd`/`.ps1` 之类 shim，而 CLI 查找和页面的「已安装」徽标读的正是这些。两个
   `setup-*.bat` 的 `--uninstall` 会在 `npm uninstall -g` 之后删掉 shim 与空 scope 目录，

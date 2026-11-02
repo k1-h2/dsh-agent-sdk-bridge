@@ -60,7 +60,13 @@ async function* inertInput(): AsyncGenerator<never> {
 /** Cached quota reader for one brand. */
 export class QoderUsage {
   private cached: UsageSnapshot | undefined
-  private inflight: Promise<UsageSnapshot> | undefined
+  private inflight: { epoch: number, promise: Promise<UsageSnapshot> } | undefined
+  /**
+   * Bumped by {@link invalidate}. A fetch that started before a sign-in may
+   * still resolve with the previous account's numbers, so it must neither be
+   * shared with later readers nor written back to the cache.
+   */
+  private epoch = 0
 
   /**
    * @param brand - which edition's CLI answers.
@@ -89,16 +95,29 @@ export class QoderUsage {
       return this.missingCli()
     }
     const ttlMs = readLive(this.ttlMs, DEFAULT_USAGE_CACHE_TTL_MS)
+    const epoch = this.epoch
     if (!fresh && this.cached !== undefined && Date.now() - this.cached.at < ttlMs) return this.cached
-    this.inflight ??= this.fetch().finally(() => { this.inflight = undefined })
-    const snapshot = await this.inflight
-    this.cached = snapshot
+    let entry = this.inflight
+    if (entry === undefined || entry.epoch !== epoch) {
+      const promise = this.fetch()
+      entry = { epoch, promise }
+      this.inflight = entry
+      const settled = entry
+      const clear = (): void => {
+        if (this.inflight === settled) this.inflight = undefined
+      }
+      void promise.then(clear, clear)
+    }
+    const snapshot = await entry.promise
+    if (epoch === this.epoch) this.cached = snapshot
     return snapshot
   }
 
-  /** Drop the cached reading. */
+  /** Drop the cached reading, including any fetch that started before now. */
   invalidate(): void {
     this.cached = undefined
+    this.epoch += 1
+    this.inflight = undefined
   }
 
   /** The reading for a machine whose CLI is not installed. */

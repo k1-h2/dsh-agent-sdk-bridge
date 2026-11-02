@@ -28,6 +28,7 @@ import { feedImageRefs, feedToText, imageRefText, imageRefs, joinFeeds, renderIn
 import type { Feed, ImagePathResolver } from './render.ts'
 import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
 import type { ChannelContent, ResolvedImages, SessionModelPolicy } from './session.ts'
+import { discardSdk } from './sdk.ts'
 import type { UsageSnapshot } from './usage.ts'
 import { QoderUsage } from './usage.ts'
 
@@ -474,6 +475,22 @@ export class QoderAdapter extends LlmAdapter {
   /** Forget the cached quota reading; the next read asks the CLI again. */
   invalidateUsage(): void {
     this.usage.invalidate()
+  }
+
+  /**
+   * Forget everything that was read under the account that just left.
+   *
+   * Signing in or out replaces the credentials on disk, but the SDK daemon and
+   * every warm session loaded the old ones when they started, and the catalog
+   * and quota caches describe that same old account. Signing out has to drop
+   * the sessions; signing in has to drop all four, or the page keeps showing
+   * the previous account until the process restarts.
+   */
+  resetAccount(): void {
+    this.catalog.invalidate()
+    this.usage.invalidate()
+    this.sessions.closeAll()
+    discardSdk(this.brand)
   }
 
   /** Whether the user switched one model off. */

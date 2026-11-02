@@ -53,9 +53,15 @@ const sharedSnapshots = new Map<QoderBrand, CatalogSnapshot>()
 /** Cached live CLI catalog with a static fallback. */
 export class QoderModelCatalog {
   private cached: CatalogSnapshot | undefined
-  private inflight: Promise<readonly ModelInfo[]> | undefined
+  private inflight: { epoch: number, promise: Promise<readonly ModelInfo[]> } | undefined
   /** Why the last refresh failed, for the settings page's guidance. */
   private failure: string | undefined
+  /**
+   * Bumped by {@link invalidate}. A fetch that started before a sign-in carries
+   * the previous account's entries, so it must not republish them after the
+   * cache was dropped for that account change.
+   */
+  private epoch = 0
 
   /**
    * @param brand - which edition's CLI answers.
@@ -78,6 +84,7 @@ export class QoderModelCatalog {
    */
   async liveModels(): Promise<readonly ModelInfo[]> {
     const ttlMs = readLive(this.ttlMs, DEFAULT_MODEL_CACHE_TTL_MS)
+    const epoch = this.epoch
     const fresh = (snapshot: CatalogSnapshot | undefined): boolean =>
       snapshot !== undefined && Date.now() - snapshot.at < ttlMs
     // Own cache first, then the process-wide one a previous adapter left behind.
@@ -86,9 +93,22 @@ export class QoderModelCatalog {
       this.cached = cached
       return officialOnly(cached.models)
     }
-    this.inflight ??= this.fetch().finally(() => { this.inflight = undefined })
+    let entry = this.inflight
+    if (entry === undefined || entry.epoch !== epoch) {
+      const promise = this.fetch()
+      entry = { epoch, promise }
+      this.inflight = entry
+      const settled = entry
+      const clear = (): void => {
+        if (this.inflight === settled) this.inflight = undefined
+      }
+      void promise.then(clear, clear)
+    }
     try {
-      const models = await this.inflight
+      const models = await entry.promise
+      // Read before the account changed: answer this reader, but leave the
+      // cache to the fetch that the post-change read already started.
+      if (epoch !== this.epoch) return officialOnly(models)
       const snapshot: CatalogSnapshot = { at: Date.now(), models }
       this.cached = snapshot
       sharedSnapshots.set(this.brand, snapshot)
@@ -96,7 +116,7 @@ export class QoderModelCatalog {
       return officialOnly(models)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      this.failure = cliFailureText(detail, this.brand)
+      if (epoch === this.epoch) this.failure = cliFailureText(detail, this.brand)
       // A failed refresh keeps serving the last good list rather than dropping
       // to the static fallback, which would hide the account's real models.
       return officialOnly((this.cached ?? sharedSnapshots.get(this.brand))?.models ?? [])
@@ -134,6 +154,8 @@ export class QoderModelCatalog {
     this.cached = undefined
     sharedSnapshots.delete(this.brand)
     this.failure = undefined
+    this.epoch += 1
+    this.inflight = undefined
   }
 
   /** dsh catalog entries: the enabled live list, or the static fallback. */

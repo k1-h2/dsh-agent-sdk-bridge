@@ -68,6 +68,22 @@ export declare function loadSdk(brand: QoderBrand): Promise<QoderSdkModule>;
  */
 export declare function resetSdk(brand: QoderBrand): void;
 /**
+ * Drop the loaded generation and stop the daemon it started.
+ *
+ * A daemon loads the CLI's credentials when it initializes, and those
+ * credentials are not part of the configuration signature: signing in as
+ * another account leaves the daemon answering as the account it started with.
+ * Shutting it down and forcing a new instance makes the next query read the
+ * credentials that are on disk now.
+ *
+ * The generation is dropped synchronously, so a read that starts as soon as the
+ * sign-in helper exits already gets the new instance; the old daemon is stopped
+ * in the background because no caller can wait on the shutdown.
+ *
+ * @param brand - which edition's daemon to replace.
+ */
+export declare function discardSdk(brand: QoderBrand): void;
+/**
  * Whether an error is the SDK's daemon refusing a different configuration.
  *
  * @param error - whatever a query threw.

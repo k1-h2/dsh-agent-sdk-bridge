@@ -407,12 +407,12 @@ export async function handleApi(
         const mode = parsed.mode
         const result = startSetup(postBrand, mode, code => {
           if (code !== 0) return
-          qoder.invalidateCatalog()
-          qoder.invalidateUsage()
-          // A warm session owns a CLI process that loaded its credentials at
-          // start-up; after a sign-out it would keep answering as the account
-          // that just left. Dropping them makes the next turn start clean.
-          if (mode === 'logout') qoder.closeSessions()
+          // The helper may have installed, signed in, signed out, or removed
+          // the CLI. Every one of those changes whose credentials are on disk,
+          // while the SDK daemon and warm sessions still hold the ones they
+          // loaded at start-up — a sign-in after switching accounts would keep
+          // answering as the account that just left until the process restart.
+          qoder.resetAccount()
         })
         if (!result.started) {
           const status = result.reason === 'busy' ? 409 : result.reason === 'unsupported' ? 501 : 500

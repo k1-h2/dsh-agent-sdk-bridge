@@ -50,6 +50,12 @@ export declare class QoderUsage {
     private cached;
     private inflight;
     /**
+     * Bumped by {@link invalidate}. A fetch that started before a sign-in may
+     * still resolve with the previous account's numbers, so it must neither be
+     * shared with later readers nor written back to the cache.
+     */
+    private epoch;
+    /**
      * @param brand - which edition's CLI answers.
      * @param ttlMs - how long a reading stays fresh; read per use.
      * @param timeoutMs - how long one round trip may take.
@@ -62,7 +68,7 @@ export declare class QoderUsage {
      * @returns the reading; `error` carries a failed lookup instead of throwing.
      */
     read(fresh?: boolean): Promise<UsageSnapshot>;
-    /** Drop the cached reading. */
+    /** Drop the cached reading, including any fetch that started before now. */
     invalidate(): void;
     /** The reading for a machine whose CLI is not installed. */
     private missingCli;
