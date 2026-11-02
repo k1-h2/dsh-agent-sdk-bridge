@@ -80,6 +80,29 @@ bearer token，只留在本机，请不要分享或提交到仓库。从旧版�
 `tools: []` 禁用 CLI 内置工具，只保留宿主通过 MCP 挂入的工具；CodeBuddy 把 MCP server 名
 规范成 `dsh_host` 的写法也已兼容。升级后重启 DSH Web 即可。
 
+**CodeBuddy 用着用着报 `Tool "mcp__dsh_host__ops_edit" does not exist in the current tool set.`？**
+已修复。这句是 **CodeBuddy CLI 自己的**话（由它的 `Tool X not found in agent Y` 改写而来），
+不是宿主说的：模型调了一个 MCP server 里并不存在的工具名。根因在本插件一边，有两层：
+
+1. **MCP server 连接时没有 `tools` 能力**。MCP SDK 的 `McpServer` 只在**第一次**
+   `registerTool` 时才安装 `tools/list` / `tools/call` 处理器并登记 `tools` 能力（带
+   `listChanged`）。本插件在 `ensureTools()` 里注册工具，而首轮宿主还没给出工具表时会以空表
+   连接——于是 server 带着「没有 tools 能力」连上去，`tools/list` 对客户端直接
+   `Method not found (-32601)`；之后模型用到的 `ops_*` 工具再来注册时，SDK 抛
+   `Cannot register capabilities after connecting to transport`，旧代码 `catch { continue }`
+   把它吞掉，工具就永远没进 `tools/list`。模型照着宿主系统提示和 `tool-addition` 块去调，
+   自然得到上面那句。现在两条 SDK 路径都在 `connect()` 之前调用
+   `setToolRequestHandlers()` 先把能力声明出来，工具于是可以随时增删。
+2. **注册只会「加」，不会「改」和「删」**。MCP SDK 对同名工具第二次 `registerTool` 直接抛
+   `Tool X is already registered`，所以切换 `dsh-ops` 模式后 schema 变了却留在旧定义上，
+   宿主撤下的工具也注销不掉。现在 `HostToolRegistry` 按名字对账：新增的注册、变了的
+   `update()` 就地更新、撤下的 `remove()`，每次变化都 `sendToolListChanged()` 通知客户端。
+   注册失败不再静默——会以 `[dsh-agent-sdk-bridge] 宿主工具 X 未能注册进 MCP server：…`
+   打到日志，因为「工具从模型世界里消失、宿主却以为还在提供」正是这句话的来源。
+
+判据是 `test/tool-registry.test.ts`：它用真实的 `@modelcontextprotocol/sdk` 跑一个真实的
+client/server 对，钉住连接前的能力声明、以及工具集的增/改/删。
+
 **Qoder 的上下文环为什么也会小幅跳一下（比如从 60% 掉到 20% 又涨回来）？** 因为分母曾经会
 短暂变成 200K。Qoder 的 `context_usage_ratio` 按「CLI 实际运行的窗口」算，DSH 又用适配器上报的
 窗口当分母；目录里 `dfmodel` 等模型其实声明了 `[200K, 400K, 1M]`，你选 1M 是上游支持的。旧代码

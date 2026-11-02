@@ -97,6 +97,19 @@
   仍会丢弃任何非宿主前缀的 tool_use，防止模型臆造工具名。CodeBuddy 会把 MCP server 名里的
   非字母数字字符规范成 `_`（`dsh-host` → `mcp__dsh_host__<tool>`），Qoder CLI 保留连字符，
   因此 `isHostTool()` / `hostToolName()` 同时接受两种拼写。
+- **MCP 工具集必须在连接前声明能力，并按名字对账**：MCP SDK 的 `McpServer` 只在**第一次**
+  `registerTool` 时安装 `tools/list` + `tools/call` 处理器并登记 `tools: { listChanged: true }`；
+  连上去之后再改能力会抛 `Cannot register capabilities after connecting to transport`，而空表
+  连上去的 server 连 `tools/list` 都只会回 `Method not found (-32601)`。本插件的首轮常常是空
+  工具表（宿主还没发布工具），因此 `HostToolRegistry.prepare()` 在 `connect()` 之前显式调用
+  `setToolRequestHandlers()`，把能力先声明出来。
+  注册本身也从「只增」改成按名字**对账**：新增注册、schema/描述变了的 `update()` 就地更新
+  （MCP SDK 对同名第二次 `registerTool` 直接抛 `Tool X is already registered`）、宿主撤下的
+  `remove()`，变化后 `sendToolListChanged()`。这正对应用户看到的
+  `Tool "mcp__dsh_host__ops_edit" does not exist in the current tool set.`——那是
+  **CodeBuddy CLI** 的措辞，含义是模型调了一个 server 里没有的名字；工具注册失败被 `catch`
+  吞掉正是它的来源，所以现在失败了会 `console.warn` 打出来，绝不静默。
+  Qoder 路径同样适用（`session.ts` 共用 `HostToolRegistry`）。
 - **切换模型读缓存**：`resolveModel` 与 `capture()` 走 `cachedModels()`
   （`src/model-cache.ts`）：有快照就先返回快照，刷新在后台跑；只有从未读到过目录时才等待。
   三家的目录获取都很贵（Qoder 冷启动 CLI，最长等于 fetch 超时；CodeBuddy 要启进程；MiniMax
