@@ -123,6 +123,194 @@ export interface ToolResultPayload {
  */
 export type ResolvedImages = ReadonlyMap<string, { data: string, mediaType: string }>
 
+/** The handle the MCP SDK returns from (and exposes on) `registerTool`. */
+export interface RegisteredToolHandle {
+  /**
+   * Replace this tool's definition in place.
+   *
+   * The SDK also toggles `enabled`, which is what lets a tool the host withdrew
+   * actually disappear from `tools/list` instead of only stopping its handler.
+   */
+  update(updates: { description?: string, paramsSchema?: Record<string, unknown>, enabled?: boolean }): void
+  /** Unregister this tool, so the next `registerTool` on the name succeeds. */
+  remove(): void
+}
+
+/** What this module needs from the SDK's MCP server instance. */
+export interface ToolRegistryHost {
+  registerTool(
+    name: string,
+    config: { description: string, inputSchema: Record<string, unknown> },
+    handler: (args: unknown) => Promise<{ content: McpContent[], isError?: boolean }>,
+  ): RegisteredToolHandle
+  /** `markdown|json` — the tool list changed, so a client must re-read it. */
+  sendToolListChanged?(): void
+  /**
+   * Declare the tools capability now, before any transport is connected.
+   *
+   * The MCP SDK (`McpServer`) only installs its `tools/list` + `tools/call`
+   * request handlers — and only registers the `tools` capability, with
+   * `listChanged` — the first time a tool is registered. A server created with
+   * an empty tool list therefore connects with **no tools capability at all**,
+   * and every later `registerTool` throws `Cannot register capabilities after
+   * connecting to transport`. The client then answers `tools/list` with
+   * `Method not found (-32601)`.
+   *
+   * That is exactly this bridge's first turn: `ensureTools()` runs when the host
+   * has not published its tools yet, so the server connects empty. The next turn
+   * brings `ops_bash` and friends, the registration throws, the tool never
+   * appears in `tools/list`, and the model — which the host's own prompt and
+   * `tool-addition` blocks say does have those tools — calls one anyway and is
+   * told `Tool "…" does not exist in the current tool set.` Calling this before
+   * `connect()` fixes it: the capability is declared up front, so tools can be
+   * added and removed for the life of the session.
+   */
+  setToolRequestHandlers?(): void
+}
+
+/**
+ * Keeps one in-process MCP server's tool set equal to the host's live set.
+ *
+ * The host's tool list is not fixed for a session's lifetime: `dsh-ops` adds
+ * and withdraws tools as a session's mode changes and as `ops_discover_tools`
+ * pulls a deferred capability in, and DSH republishes that change to the model
+ * as `tool-addition` / `tool-removal` blocks. The MCP SDK, however, refuses a
+ * second `registerTool` for a name it already holds ("Tool X is already
+ * registered") and offers no unregister of its own, so a naive replay leaves a
+ * changed schema at its old definition and can never take a withdrawn tool back
+ * out. The model then calls a name the server does not have, and CodeBuddy
+ * answers it with `Tool "…" does not exist in the current tool set.` instead of
+ * a host result — the "tool went missing mid-conversation" symptom.
+ *
+ * This wrapper therefore reconciles by name: register what is new, `update()`
+ * what changed, and `remove()` what the host withdrew. The call handler is built
+ * per registered tool and answers through the session's tool-result pairing, so
+ * a tool re-registered after a mode change still collects its own result.
+ */
+export class HostToolRegistry {
+  /** What this registry has actually installed, by tool name, with its schema hash. */
+  private readonly installed = new Map<string, { hash: string, handle: RegisteredToolHandle }>()
+
+  constructor(
+    /** The MCP server the tools are installed into. */
+    private readonly host: ToolRegistryHost,
+    /**
+     * The call handler handed to the SDK for one tool.
+     *
+     * Built per registered tool and given the tool's name; the session's pairing
+     * answers on the tool-use id it announced, not on the name.
+     */
+    private readonly handlerFor: (name: string) => ((args: unknown) => Promise<{ content: McpContent[], isError?: boolean }>),
+    /** Receives anything the SDK refuses, so a silent gap never reaches the model. */
+    private readonly onProblem: (message: string) => void = () => {},
+  ) {}
+
+  /**
+   * Declare the tools capability before the transport connects.
+   *
+   * Must run before `connect()`, because the SDK refuses a capability change
+   * afterwards. Without it a session whose first turn published no host tools
+   * connects with no tools capability, and every tool the host offers later can
+   * only throw — see {@link ToolRegistryHost.setToolRequestHandlers}.
+   */
+  prepare(): void {
+    try {
+      this.host.setToolRequestHandlers?.()
+    } catch (error) {
+      // A host whose SDK has no such hook (or that is already connected) still
+      // works for a fixed tool set; only the mid-session add/remove is lost.
+      this.onProblem(`MCP tools 能力未能在连接前声明：${errorText(error)}`)
+    }
+  }
+
+  /**
+   * Make the installed tool set match `tools` exactly.
+   *
+   * @param tools - the host's live tool schemas, in the order the host published them.
+   * @returns whether anything was added, changed or removed.
+   */
+  reconcile(tools: readonly { name: string, description: string, parameters?: unknown }[]): boolean {
+    const wanted = new Map<string, { hash: string, schema: { name: string, description: string, parameters?: unknown } }>()
+    for (const schema of tools) {
+      // Last write wins: the host never publishes a duplicate name, but a
+      // duplicate must not leave the earlier definition installed. The
+      // description is part of the signature: it is what tells the model *when*
+      // to call the tool, so a reworded one is a definition change, not a no-op.
+      const hash = JSON.stringify([schema.description, schema.parameters ?? {}])
+      wanted.set(schema.name, { hash, schema })
+    }
+
+    let changed = false
+    // Withdraw first: a name that changed incompatibly is safer to re-add than
+    // to leave in place, and the host's own set is the contract.
+    for (const [name, entry] of [...this.installed.entries()]) {
+      if (wanted.has(name)) continue
+      try {
+        entry.handle.remove()
+      } catch (error) {
+        this.onProblem(`工具 ${name} 无法从 MCP 注销：${errorText(error)}`)
+      }
+      this.installed.delete(name)
+      changed = true
+    }
+
+    for (const [name, { hash, schema }] of wanted) {
+      const existing = this.installed.get(name)
+      if (existing !== undefined && existing.hash === hash) continue
+      const description = schema.description.length > 0 ? schema.description : name
+      const inputSchema = jsonSchemaToShape((schema.parameters ?? {}) as Record<string, unknown>)
+      if (existing !== undefined) {
+        // The schema changed while the session stayed alive. Updating in place
+        // keeps the tool listed with no gap for the model to notice.
+        try {
+          existing.handle.update({ description, paramsSchema: inputSchema })
+          this.installed.set(name, { hash, handle: existing.handle })
+          changed = true
+          continue
+        } catch (error) {
+          this.onProblem(`工具 ${name} 的 schema 更新失败，改为重新注册：${errorText(error)}`)
+          try {
+            existing.handle.remove()
+          } catch {
+            // A handle that cannot update or remove is reported once, below,
+            // when the fresh registration reports the same reason.
+          }
+          this.installed.delete(name)
+        }
+      }
+      try {
+        const handle = this.host.registerTool(name, { description, inputSchema }, this.handlerFor(name))
+        this.installed.set(name, { hash, handle })
+        changed = true
+      } catch (error) {
+        // Loud, and never silent: this is the one failure that removes a tool
+        // from the model's world while the host still believes it is offered.
+        this.onProblem(`宿主工具 ${name} 未能注册进 MCP server：${errorText(error)}`)
+      }
+    }
+
+    if (changed) {
+      try {
+        this.host.sendToolListChanged?.()
+      } catch {
+        // Not connected yet, so no client is listening; the connect-time
+        // `tools/list` still reports the reconciled set.
+      }
+    }
+    return changed
+  }
+
+  /** Names currently installed, for diagnostics and tests. */
+  names(): string[] {
+    return [...this.installed.keys()]
+  }
+}
+
+/** One error's message, for the diagnostics above. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 interface ChannelMessage {
   type: 'user'
   message: { role: 'user', content: ChannelContent[] }
@@ -726,7 +914,29 @@ export class QoderSession {
    */
   private readonly pairing = new ToolResultPairing()
   private readonly mcp = createSdkMcpServer({ name: MCP_SERVER_NAME, tools: [] })
-  private readonly registered = new Map<string, string>()
+  /**
+   * Reconciles the live host tool list into {@link mcp}.
+   *
+   * The session outlives the host's tool list: `dsh-ops` publishes a different
+   * set per mode and `ops_discover_tools` adds capabilities mid-conversation.
+   * Installing only what is new left the server unable to ever replace a
+   * changed schema (the MCP SDK refuses a duplicate name), so this owns the
+   * add/update/remove bookkeeping instead of a name→hash map.
+   */
+  private readonly registry = new HostToolRegistry(
+    this.mcp.instance as unknown as ToolRegistryHost,
+    () => async (_args: unknown): Promise<{ content: McpContent[], isError?: boolean }> => {
+      const result = await this.pairing.claim(this.toolResultTimeoutMs)
+      return {
+        content: result.content,
+        ...result.isError ? { isError: true } : {},
+      }
+    },
+    // A tool the SDK refused is invisible to the model, and the model then calls
+    // it, gets `Tool "…" does not exist in the current tool set.` from the CLI,
+    // and never reaches this pairing. Log it rather than let it pass silently.
+    message => console.warn(`[dsh-agent-sdk-bridge] ${message}`),
+  )
   private queue: TurnQueue | null = null
   private model: string
   private reasoningEffort: string | undefined
@@ -847,6 +1057,11 @@ export class QoderSession {
     // The SDK is brand-specific: the CN module speaks to qoderclicn and the
     // international one to qodercli, each against its own credentials.
     const sdk = await loadSdk(this.brand)
+    // Declare the tools capability before this server connects. `query()` below
+    // connects it, and the SDK refuses a capability change afterwards — so a
+    // session whose first turn published no host tools would connect without a
+    // tools capability, and every tool the host offered later could only throw.
+    this.registry.prepare()
     const q = sdk.query({
       prompt: this.channel,
       options: {
@@ -930,31 +1145,19 @@ export class QoderSession {
     })
   }
 
-  /** Register any host tools whose schema this session's MCP server lacks. */
+  /**
+   * Make this session's MCP tool set match the host's live tool list.
+   *
+   * The host adds and withdraws tools during a conversation (`dsh-ops` mode
+   * switches, `ops_discover_tools`), so this reconciles rather than only adds:
+   * a tool that appears mid-session is registered, a changed schema is updated
+   * in place, and a withdrawn tool is removed. See {@link HostToolRegistry} for
+   * the failure this prevents — the model calling a name the MCP server no
+   * longer had, which the CLI answers with `Tool "…" does not exist in the
+   * current tool set.` instead of a host result.
+   */
   ensureTools(tools: readonly ToolSchema[]): void {
-    for (const schema of tools) {
-      const hash = JSON.stringify(schema.parameters ?? {})
-      if (this.registered.get(schema.name) === hash) continue
-      const shape = jsonSchemaToShape(schema.parameters ?? {})
-      try {
-        this.mcp.instance.registerTool(schema.name, {
-          description: schema.description.length > 0 ? schema.description : schema.name,
-          inputSchema: shape,
-        }, async (args: unknown): Promise<{ content: McpContent[], isError?: boolean }> => {
-          void args
-          const result = await this.pairing.claim(this.toolResultTimeoutMs)
-          return {
-            content: result.content,
-            ...result.isError ? { isError: true } : {},
-          }
-        })
-      } catch {
-        // Re-registration of a changed schema failed: keep the old tool rather
-        // than dropping it; nothing else can recover here.
-        continue
-      }
-      this.registered.set(schema.name, hash)
-    }
+    this.registry.reconcile(tools)
   }
 
   /**

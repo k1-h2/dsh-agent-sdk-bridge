@@ -25,6 +25,10 @@ export declare const CODEBUDDY_DEFAULT_MAX_TOKENS = 32000;
 export declare const CODEBUDDY_CACHE_TTL_MS = 300000;
 /** Give up on one CodeBuddy control round trip after this long. */
 export declare const CODEBUDDY_FETCH_TIMEOUT_MS = 30000;
+/** Whether a CLI tool name belongs to this plugin's MCP server. */
+export declare function isHostTool(toolName: string): boolean;
+/** The host-side tool name, with the MCP namespace removed. */
+export declare function hostToolName(toolName: string): string;
 /** One model as the settings page and the adapter see it. */
 export interface CodeBuddyModel {
     id: string;
@@ -210,8 +214,18 @@ export declare class CodeBuddySession {
     private session;
     private mcp;
     private readonly pairing;
-    private readonly registered;
     private toolSchemas;
+    /**
+     * Reconciles the live host tool list into {@link mcp}.
+     *
+     * Created with the MCP server, because that is what it installs into. Owned
+     * here rather than inline so a tool that the host adds or withdraws during a
+     * conversation is actually added or withdrawn: the MCP SDK refuses a second
+     * `registerTool` for a name it already holds, so the previous
+     * name→hash replay could never replace a changed schema, and `Tool "…" does
+     * not exist in the current tool set.` was what the model got for its trouble.
+     */
+    private registry;
     private queue;
     private disposed;
     private abortPending;
@@ -307,6 +321,15 @@ export declare class CodeBuddySession {
         description: string;
         parameters?: unknown;
     }[]): void;
+    /**
+     * Reconcile this session's MCP tool set with the host's live list.
+     *
+     * Add, update in place, and remove: the host withdraws tools when a mode
+     * changes and adds them when `ops_discover_tools` resolves a deferred one, and
+     * a tool the model can still name but the server no longer holds is answered
+     * with `Tool "…" does not exist in the current tool set.` — the CLI never
+     * forwards it to the host, so no tool result ever comes back.
+     */
     private registerTools;
     /** Hand the host's tool results to parked or buffered handlers. */
     deliverToolResults(tail: readonly {

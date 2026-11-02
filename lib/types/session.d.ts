@@ -86,6 +86,126 @@ export type ResolvedImages = ReadonlyMap<string, {
     data: string;
     mediaType: string;
 }>;
+/** The handle the MCP SDK returns from (and exposes on) `registerTool`. */
+export interface RegisteredToolHandle {
+    /**
+     * Replace this tool's definition in place.
+     *
+     * The SDK also toggles `enabled`, which is what lets a tool the host withdrew
+     * actually disappear from `tools/list` instead of only stopping its handler.
+     */
+    update(updates: {
+        description?: string;
+        paramsSchema?: Record<string, unknown>;
+        enabled?: boolean;
+    }): void;
+    /** Unregister this tool, so the next `registerTool` on the name succeeds. */
+    remove(): void;
+}
+/** What this module needs from the SDK's MCP server instance. */
+export interface ToolRegistryHost {
+    registerTool(name: string, config: {
+        description: string;
+        inputSchema: Record<string, unknown>;
+    }, handler: (args: unknown) => Promise<{
+        content: McpContent[];
+        isError?: boolean;
+    }>): RegisteredToolHandle;
+    /** `markdown|json` — the tool list changed, so a client must re-read it. */
+    sendToolListChanged?(): void;
+    /**
+     * Declare the tools capability now, before any transport is connected.
+     *
+     * The MCP SDK (`McpServer`) only installs its `tools/list` + `tools/call`
+     * request handlers — and only registers the `tools` capability, with
+     * `listChanged` — the first time a tool is registered. A server created with
+     * an empty tool list therefore connects with **no tools capability at all**,
+     * and every later `registerTool` throws `Cannot register capabilities after
+     * connecting to transport`. The client then answers `tools/list` with
+     * `Method not found (-32601)`.
+     *
+     * That is exactly this bridge's first turn: `ensureTools()` runs when the host
+     * has not published its tools yet, so the server connects empty. The next turn
+     * brings `ops_bash` and friends, the registration throws, the tool never
+     * appears in `tools/list`, and the model — which the host's own prompt and
+     * `tool-addition` blocks say does have those tools — calls one anyway and is
+     * told `Tool "…" does not exist in the current tool set.` Calling this before
+     * `connect()` fixes it: the capability is declared up front, so tools can be
+     * added and removed for the life of the session.
+     */
+    setToolRequestHandlers?(): void;
+}
+/**
+ * Keeps one in-process MCP server's tool set equal to the host's live set.
+ *
+ * The host's tool list is not fixed for a session's lifetime: `dsh-ops` adds
+ * and withdraws tools as a session's mode changes and as `ops_discover_tools`
+ * pulls a deferred capability in, and DSH republishes that change to the model
+ * as `tool-addition` / `tool-removal` blocks. The MCP SDK, however, refuses a
+ * second `registerTool` for a name it already holds ("Tool X is already
+ * registered") and offers no unregister of its own, so a naive replay leaves a
+ * changed schema at its old definition and can never take a withdrawn tool back
+ * out. The model then calls a name the server does not have, and CodeBuddy
+ * answers it with `Tool "…" does not exist in the current tool set.` instead of
+ * a host result — the "tool went missing mid-conversation" symptom.
+ *
+ * This wrapper therefore reconciles by name: register what is new, `update()`
+ * what changed, and `remove()` what the host withdrew. The call handler is built
+ * per registered tool and answers through the session's tool-result pairing, so
+ * a tool re-registered after a mode change still collects its own result.
+ */
+export declare class HostToolRegistry {
+    /** The MCP server the tools are installed into. */
+    private readonly host;
+    /**
+     * The call handler handed to the SDK for one tool.
+     *
+     * Built per registered tool and given the tool's name; the session's pairing
+     * answers on the tool-use id it announced, not on the name.
+     */
+    private readonly handlerFor;
+    /** Receives anything the SDK refuses, so a silent gap never reaches the model. */
+    private readonly onProblem;
+    /** What this registry has actually installed, by tool name, with its schema hash. */
+    private readonly installed;
+    constructor(
+    /** The MCP server the tools are installed into. */
+    host: ToolRegistryHost, 
+    /**
+     * The call handler handed to the SDK for one tool.
+     *
+     * Built per registered tool and given the tool's name; the session's pairing
+     * answers on the tool-use id it announced, not on the name.
+     */
+    handlerFor: (name: string) => ((args: unknown) => Promise<{
+        content: McpContent[];
+        isError?: boolean;
+    }>), 
+    /** Receives anything the SDK refuses, so a silent gap never reaches the model. */
+    onProblem?: (message: string) => void);
+    /**
+     * Declare the tools capability before the transport connects.
+     *
+     * Must run before `connect()`, because the SDK refuses a capability change
+     * afterwards. Without it a session whose first turn published no host tools
+     * connects with no tools capability, and every tool the host offers later can
+     * only throw — see {@link ToolRegistryHost.setToolRequestHandlers}.
+     */
+    prepare(): void;
+    /**
+     * Make the installed tool set match `tools` exactly.
+     *
+     * @param tools - the host's live tool schemas, in the order the host published them.
+     * @returns whether anything was added, changed or removed.
+     */
+    reconcile(tools: readonly {
+        name: string;
+        description: string;
+        parameters?: unknown;
+    }[]): boolean;
+    /** Names currently installed, for diagnostics and tests. */
+    names(): string[];
+}
 export type QueueItem = {
     kind: 'chunk';
     chunk: StreamChunk;
@@ -428,7 +548,16 @@ export declare class QoderSession {
      */
     private readonly pairing;
     private readonly mcp;
-    private readonly registered;
+    /**
+     * Reconciles the live host tool list into {@link mcp}.
+     *
+     * The session outlives the host's tool list: `dsh-ops` publishes a different
+     * set per mode and `ops_discover_tools` adds capabilities mid-conversation.
+     * Installing only what is new left the server unable to ever replace a
+     * changed schema (the MCP SDK refuses a duplicate name), so this owns the
+     * add/update/remove bookkeeping instead of a name→hash map.
+     */
+    private readonly registry;
     private queue;
     private model;
     private reasoningEffort;
@@ -530,7 +659,17 @@ export declare class QoderSession {
      * per call, in execution order, before dispatching the MCP message).
      */
     private canUseTool;
-    /** Register any host tools whose schema this session's MCP server lacks. */
+    /**
+     * Make this session's MCP tool set match the host's live tool list.
+     *
+     * The host adds and withdraws tools during a conversation (`dsh-ops` mode
+     * switches, `ops_discover_tools`), so this reconciles rather than only adds:
+     * a tool that appears mid-session is registered, a changed schema is updated
+     * in place, and a withdrawn tool is removed. See {@link HostToolRegistry} for
+     * the failure this prevents — the model calling a name the MCP server no
+     * longer had, which the CLI answers with `Tool "…" does not exist in the
+     * current tool set.` instead of a host result.
+     */
     ensureTools(tools: readonly ToolSchema[]): void;
     /**
      * Deliver host tool results to parked or buffered handlers, keyed by call id,

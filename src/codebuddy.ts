@@ -27,7 +27,6 @@ import { jsonSchemaToShape } from './jsonschema.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from './sdk.ts'
-import type { ChannelContent, ToolResultPayload } from './session.ts'
 
 /**
  * Literal characters in a channel payload; images contribute pixels, not text.
@@ -58,7 +57,8 @@ function toCodeBuddyUserMessage(
     parent_tool_use_id: null,
   }
 }
-import { MCP_SERVER_NAME, ToolResultPairing, TurnQueue } from './session.ts'
+import { MCP_SERVER_NAME, HostToolRegistry, ToolResultPairing, TurnQueue } from './session.ts'
+import type { ChannelContent, ToolResultPayload, ToolRegistryHost } from './session.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
 
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
@@ -90,12 +90,12 @@ const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
 const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')}__`
 
 /** Whether a CLI tool name belongs to this plugin's MCP server. */
-function isHostTool(toolName: string): boolean {
+export function isHostTool(toolName: string): boolean {
   return toolName.startsWith(MCP_TOOL_PREFIX) || toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)
 }
 
 /** The host-side tool name, with the MCP namespace removed. */
-function hostToolName(toolName: string): string {
+export function hostToolName(toolName: string): string {
   if (toolName.startsWith(MCP_TOOL_PREFIX)) return toolName.slice(MCP_TOOL_PREFIX.length)
   if (toolName.startsWith(MCP_TOOL_PREFIX_SANITIZED)) return toolName.slice(MCP_TOOL_PREFIX_SANITIZED.length)
   return toolName
@@ -945,8 +945,18 @@ export class CodeBuddySession {
   private session: SessionImpl | null = null
   private mcp: ReturnType<typeof import('@tencent-ai/agent-sdk').createSdkMcpServer> | null = null
   private readonly pairing = new ToolResultPairing()
-  private readonly registered = new Map<string, string>()
   private toolSchemas: readonly { name: string, description: string, parameters?: unknown }[] = []
+  /**
+   * Reconciles the live host tool list into {@link mcp}.
+   *
+   * Created with the MCP server, because that is what it installs into. Owned
+   * here rather than inline so a tool that the host adds or withdraws during a
+   * conversation is actually added or withdrawn: the MCP SDK refuses a second
+   * `registerTool` for a name it already holds, so the previous
+   * name→hash replay could never replace a changed schema, and `Tool "…" does
+   * not exist in the current tool set.` was what the model got for its trouble.
+   */
+  private registry: HostToolRegistry | null = null
   private queue: TurnQueue | null = null
   private disposed = false
   private abortPending = false
@@ -1069,28 +1079,18 @@ export class CodeBuddySession {
     this.registerTools()
   }
 
+  /**
+   * Reconcile this session's MCP tool set with the host's live list.
+   *
+   * Add, update in place, and remove: the host withdraws tools when a mode
+   * changes and adds them when `ops_discover_tools` resolves a deferred one, and
+   * a tool the model can still name but the server no longer holds is answered
+   * with `Tool "…" does not exist in the current tool set.` — the CLI never
+   * forwards it to the host, so no tool result ever comes back.
+   */
   private registerTools(): void {
-    if (this.mcp === null) return
-    for (const schema of this.toolSchemas) {
-      const hash = JSON.stringify(schema.parameters ?? {})
-      if (this.registered.get(schema.name) === hash) continue
-      const shape = jsonSchemaToShape((schema.parameters ?? {}) as Record<string, unknown>)
-      try {
-        this.mcp.instance.registerTool(schema.name, {
-          description: schema.description.length > 0 ? schema.description : schema.name,
-          inputSchema: shape,
-        }, async () => {
-          const result = await this.pairing.claim(this.toolResultTimeoutMs)
-          return {
-            content: result.content,
-            ...result.isError ? { isError: true } : {},
-          }
-        })
-      } catch {
-        continue
-      }
-      this.registered.set(schema.name, hash)
-    }
+    if (this.registry === null) return
+    this.registry.reconcile(this.toolSchemas)
   }
 
   /** Hand the host's tool results to parked or buffered handlers. */
@@ -1173,7 +1173,28 @@ export class CodeBuddySession {
     if (this.session !== null) return this.session
     const sdk = await loadCodeBuddySdk()
     this.mcp ??= sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: [] })
-    // Host tools must exist in the MCP server before the CLI lists them.
+    // Host tools must exist in the MCP server before the CLI lists them. The
+    // registry is created here, with the server it installs into, and the
+    // replay below is what puts the first turn's schemas in place.
+    this.registry ??= new HostToolRegistry(
+      this.mcp.instance as unknown as ToolRegistryHost,
+      () => async () => {
+        const result = await this.pairing.claim(this.toolResultTimeoutMs)
+        return {
+          content: result.content,
+          ...result.isError ? { isError: true } : {},
+        }
+      },
+      // A tool the SDK refused is invisible to the model, which then calls it and
+      // gets the CLI's `does not exist in the current tool set` instead of a host
+      // result. Surface it instead of dropping it.
+      message => console.warn(`[dsh-agent-sdk-bridge] ${message}`),
+    )
+    // Declare the tools capability before createSession connects this server. A
+    // first turn that published no host tools would otherwise connect with no
+    // tools capability at all, and the MCP SDK then rejects every later
+    // registration — the tool silently never reaches `tools/list`.
+    this.registry.prepare()
     this.registerTools()
     const session = sdk.unstable_v2_createSession({
       environment: codeBuddyEnvironment(this.region),
