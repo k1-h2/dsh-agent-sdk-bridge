@@ -2,8 +2,9 @@
  * Live model catalog retrieval from one edition's local Qoder CLI. One
  * short-lived inner session sends the SDK's `get_models` control request; the
  * response (including account-custom models) stays fresh for a TTL, concurrent
- * callers share one in-flight fetch, and the static CN catalog is the fallback
- * while that edition's CLI is unreachable.
+ * callers share one in-flight fetch, and the static CN catalog is a fallback
+ * only while that edition's CLI is installed but cannot answer — never for an
+ * account that answered with an empty list (see {@link emptyCatalogFallback}).
  *
  * The CN and international editions publish different catalogs, so cache and
  * fallback are kept per brand: a list fetched from one account must never be
@@ -49,6 +50,20 @@ interface CatalogSnapshot {
  * the requesting catalog's TTL, so normal freshness is unchanged.
  */
 const sharedSnapshots = new Map<QoderBrand, CatalogSnapshot>()
+
+/**
+ * Brands whose CLI has answered a catalogue read successfully at least once.
+ *
+ * An empty answer is the account speaking — signed out, or a plan with no
+ * official models — and it must not be confused with a read that never
+ * happened. Deliberately NOT cleared by {@link QoderModelCatalog.invalidate}:
+ * a sign-out drops the catalogue, and the next read may fail outright (the CLI
+ * was just re-authenticated, the network hiccuped), which would otherwise look
+ * like "never reachable" and republish the static plan to an account with
+ * nothing. Any successful read counts, including one whose models are all
+ * switched off upstream: the plan only ever stands in for silence.
+ */
+const answeredCatalogs = new Set<QoderBrand>()
 
 /** Cached live CLI catalog with a static fallback. */
 export class QoderModelCatalog {
@@ -113,6 +128,10 @@ export class QoderModelCatalog {
       this.cached = snapshot
       sharedSnapshots.set(this.brand, snapshot)
       this.failure = undefined
+      // A successful read — empty or not — is an answer. A later failed read
+      // must not mistake it for "the CLI was never reachable" and publish the
+      // captured plan.
+      answeredCatalogs.add(this.brand)
       return officialOnly(models)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -149,6 +168,9 @@ export class QoderModelCatalog {
    * is installed at all, and which account is signed in — and an empty answer is
    * cached like any other. So after the setup helper has run, the page's next
    * read must not be served from a snapshot taken before that login existed.
+   *
+   * The remembered empty answer is deliberately kept: it says the account has
+   * nothing, which a later failed read must not turn back into the static plan.
    */
   invalidate(): void {
     this.cached = undefined
@@ -158,10 +180,15 @@ export class QoderModelCatalog {
     this.inflight = undefined
   }
 
-  /** dsh catalog entries: the enabled live list, or the static fallback. */
+  /** dsh catalog entries: the enabled live list, or the fallback {@link emptyCatalogFallback} allows. */
   async models(): Promise<readonly QoderCatalogModel[]> {
     const live = (await this.liveModels()).filter(model => model.isEnabled !== false)
-    if (live.length === 0) return brandProfile(this.brand).staticCatalog ? QODER_MODELS : []
+    if (live.length === 0) {
+      return emptyCatalogFallback(this.brand, {
+        cliInstalled: resolveQoderCli(this.brand) !== undefined,
+        answered: answeredCatalogs.has(this.brand),
+      })
+    }
     return live.map(model => ({
       id: model.value,
       name: model.displayName.length > 0 ? model.displayName : model.value,
@@ -225,6 +252,34 @@ export class QoderModelCatalog {
       await q.close().catch(() => undefined)
     }
   }
+}
+
+/**
+ * What the picker may show when the live catalogue came back empty.
+ *
+ * The captured CN plan is a stand-in for exactly one situation: this edition's
+ * CLI is installed, and the catalogue could not be read because the CLI or the
+ * network was unavailable. Two cases must stay empty:
+ *
+ * - The CLI answered. That is the account speaking — signed out, or a plan
+ *   with no official models — and publishing the plan here is what put every
+ *   Qoder CN model back into the picker after a sign-out, where selecting one
+ *   could only fail. `getAvailableModels()` answers a *successful* empty list
+ *   while signed out (its `cache` and `live` strategies included, even with a
+ *   populated `~/.qoder-cn/.models`), so this is the ordinary sign-out path,
+ *   not an edge case.
+ * - The CLI is not installed at all, so none of those models could run.
+ *
+ * @param brand - which edition's catalogue is empty.
+ * @param state - whether that edition's CLI is on the machine, and whether a
+ *   successful read has ever produced an answer.
+ */
+export function emptyCatalogFallback(
+  brand: QoderBrand,
+  state: { cliInstalled: boolean, answered: boolean },
+): readonly QoderCatalogModel[] {
+  if (!state.cliInstalled || state.answered) return []
+  return brandProfile(brand).staticCatalog ? QODER_MODELS : []
 }
 
 /**

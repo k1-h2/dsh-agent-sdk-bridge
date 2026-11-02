@@ -77,6 +77,18 @@
   切区域时页面先渲染本地快照，再用 `fresh=1` 在后台校验。
   浏览器由 CLI 的登录流程自己打开；`onAuthUrl` 只记录 URL 供卡片显示「手动打开登录页」，
   宿主不再调用系统打开方式，否则每次登录会出现两个相同标签页。
+- **空目录是「账号的回答」，不是「读失败」**：CLI 1.1.81 在**未登录**时，`accountInfo()` 抛
+  `Authentication required`，但 `getAvailableModels()` 返回**成功的空数组**——连 `cache` /
+  `live` 两种 `fetchStrategy` 也是空数组（即使 `~/.qoder-cn/.models` 里有上一账号的
+  `catalog-v6/v7`，目录按 uid 分目录存放，所以读不到上一账号的表）。因此「空」是账号在说话。
+  以前 `models()` 只看 `live.length === 0` 就当作「CLI 读不到」并回落到静态 `QODER_MODELS`，
+  于是**退出登录后聊天选择器仍然列满 Qoder 模型**（设置页读 `describeCatalog()`、只看 live，
+  所以设置页是空的，两个界面就此不一致）。现在回落到静态表只有一种情况：**本机装了 CLI，
+  且这次读取还没得到过任何回答**；`emptyCatalogFallback()` 是这条规则的唯一实现，
+  由 `answeredCatalogs`（进程级、**不随 `invalidate()` 清空**）记录「成功读过一次」。
+  记录不清空是刻意的：退出登录后紧接着一次网络失败，否则又会退化成「CLI 从没读到过」。
+  CodeBuddy 与 MiniMax 本来就没这个问题——它们的 `listModels()` 先 `isSignedIn()` 再读目录，
+  而且没有静态表可泄；Qoder 是唯一缺这道闸的。
 - **CodeBuddy 的宿主工具**：宿主工具通过进程内 MCP server 挂入，`CodeBuddySession` 必须
   在 CLI 启动前完成注册——`ensureTools()` 会保存 schema，`ensureStarted()` 创建 MCP server
   后立即重放，然后才 `createSession`（MCP SDK 拒绝连接后再注册）。早返回会让首个 turn
