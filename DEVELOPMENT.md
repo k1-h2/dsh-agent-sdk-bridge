@@ -231,7 +231,13 @@
   它那一轮结束之后才触发。成对调用等待宿主的下一次请求并由该请求结算；只有未配上对的 handler
   受 `toolResultTimeoutSeconds` 兜底。宿主**从未见过**的调用（工具块落在两次宿主请求之间被丢弃，
   而 CLI 仍派发了 MCP 消息）不 park，立即返回取消结果——否则这一轮没人能解开。
-- **旁路请求**：标题生成、压缩摘要走冷启动一次性调用，不占用 warm 会话。
+- **旁路请求**：标题生成、压缩摘要走冷启动一次性调用，不占用 warm 会话。**它们不是「继续
+  对话」**：DSH 在请求上标 `purpose: 'compaction' | 'session-title'`，并把真正的指令作为
+  **最后一条 user 消息**追加（压缩那条是 `Condense the conversation ABOVE …`）。这类请求必须用
+  `renderSideChannelFeed()` 组 prompt（角色=执行末条指令，结尾=「请执行最后一条用户消息给出的
+  任务」），不能用 `renderInitialFeed()`：后者开头写「你只输出"下一条助手回复"」，结尾又写
+  「输出下一条助手回复」，模型于是把上一条回复复述一遍，摘要位置就变成了复述。三家共用这份
+  渲染，判据在 `test/side-channel.test.ts`。
 - **真实计量**：CLI 默认把用量帧里的 token 计数清零，插件在启动子进程时带上它的
   `EXPOSE_TOKEN_USAGE` 开关；总量、缓存命中与 tok/s 因此都是 provider 实测值，只有拿不到计量时才
   按「context 比率 → 字符估算」兜底。占用样本只取自**每次请求结束**的那一帧（`requestUsageSample()`，

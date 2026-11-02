@@ -24,7 +24,7 @@ import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import { DEFAULT_MODEL_CACHE_TTL_MS, DEFAULT_FETCH_TIMEOUT_MS, QoderModelCatalog } from './models.ts'
 import { cachedModels } from './model-cache.ts'
-import { feedImageRefs, feedToText, imageRefText, imageRefs, joinFeeds, renderInitialFeed, renderRefreshed, renderUserTurn } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, imageRefs, joinFeeds, renderInitialFeed, renderRefreshed, renderSideChannelFeed, renderUserTurn } from './render.ts'
 import type { Feed, ImagePathResolver } from './render.ts'
 import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
 import type { ChannelContent, ResolvedImages, SessionModelPolicy } from './session.ts'
@@ -651,8 +651,10 @@ export class QoderAdapter extends LlmAdapter {
     const model = resolveQoderModelId(options.model, this.modelAliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
       // Side channels summarise text; pixels would only cost them context.
-      const prompt = feedToText(renderInitialFeed(options.system, options.messages, this.imagePath), this.imagePath)
-        + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'
+      // A side-channel request carries its instruction as the last user message
+      // (compaction appends one), so it is rendered as the task rather than as a
+      // turn to continue. See renderSideChannelFeed.
+      const prompt = feedToText(renderSideChannelFeed(options.system, options.messages, this.imagePath), this.imagePath)
       // Side channels (titles, compaction summaries) reuse the main session's
       // model so dsh's recorded summarization target matches what qodercli
       // actually runs — a different default route could have different

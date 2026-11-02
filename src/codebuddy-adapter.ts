@@ -23,7 +23,7 @@ import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import type { Feed, ImagePathResolver } from './render.ts'
-import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, resolvedFeedParts } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from './render.ts'
 import type { ChannelContent } from './session.ts'
 
 /** The CodeBuddy provider route. */
@@ -375,8 +375,10 @@ export class CodeBuddyAdapter extends LlmAdapter {
     }
     const model = resolveCodeBuddyModelId(options.model, this.aliases)
     if (options.sessionId === undefined || options.purpose !== undefined) {
-      const prompt = feedToText(renderInitialFeed(options.system, options.messages, this.options.imagePath), this.options.imagePath)
-        + '\n（这是一次性旁路请求，直接输出下一条助手回复。）'
+      // A side-channel request (compaction, a session title) carries its
+      // instruction as the last user message, so it is rendered as the task to
+      // carry out rather than as a turn to continue. See renderSideChannelFeed.
+      const prompt = feedToText(renderSideChannelFeed(options.system, options.messages, this.options.imagePath), this.options.imagePath)
       for (const chunk of await codeBuddyColdStream(region, prompt, model, options)) yield chunk
       return
     }

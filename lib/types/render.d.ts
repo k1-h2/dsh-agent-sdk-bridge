@@ -104,6 +104,17 @@ export declare function feedTextLength(feed: Feed): number;
  */
 export declare function feedWideCharCount(feed: Feed): number;
 /**
+ * Compose the feed for a one-shot side-channel request (compaction, a session
+ * title): its last user message is the instruction to carry out, not a turn to
+ * continue.
+ *
+ * The history is still rendered, because compaction must see the conversation
+ * it is condensing, but the role preamble and the closing line both name the
+ * trailing instruction as the task. See {@link SIDE_CHANNEL_ROLE} for the
+ * misread this replaces.
+ */
+export declare function renderSideChannelFeed(system: string | undefined, messages: readonly RequestMessage[], imagePath?: ImagePathResolver): Feed;
+/**
  * Compose the first feed for a fresh session: backend role, the host system
  * prompt, and the existing conversation as compact context. Messages of the
  * current turn keep their image references; earlier ones are handles.

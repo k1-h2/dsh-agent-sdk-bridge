@@ -103,6 +103,24 @@ const BACKEND_ROLE = [
 ].join('\n')
 
 /**
+ * Preamble for a side-channel call whose last user message *is* the task.
+ *
+ * Compaction and session titles are not "what would the assistant say next":
+ * DSH appends an instruction as the final user message — compaction sends
+ * `Condense the conversation ABOVE into a structured checkpoint…` — and
+ * expects exactly that to be carried out. Rendering such a request with
+ * {@link BACKEND_ROLE} buried the instruction inside "background" and then
+ * closed with "output the next assistant reply", so a compaction run dutifully
+ * reproduced the previous assistant message instead of summarising. The
+ * transcript then showed the last reply restated where the checkpoint belonged.
+ */
+const SIDE_CHANNEL_ROLE = [
+  '你在为一个编码 agent（宿主）充当 LLM API 后端。',
+  '这一次不是继续对话：最后一条用户消息就是你要执行的任务，请直接完成它。',
+  '不要把最后一条消息当成新的聊天内容来回应，也不要复述对话或解释你的角色。',
+].join('\n')
+
+/**
  * Join feed sections into one feed. While no section carries an image the
  * result is the historical text shape, sections separated by a blank line;
  * the first image turns the whole feed into parts, with the text around it
@@ -241,6 +259,39 @@ export function feedTextLength(feed: Feed): number {
 export function feedWideCharCount(feed: Feed): number {
   if (typeof feed === 'string') return countWideChars(feed)
   return feed.reduce((total, part) => total + (part.type === 'text' ? countWideChars(part.text) : 0), 0)
+}
+
+/**
+ * Compose the feed for a one-shot side-channel request (compaction, a session
+ * title): its last user message is the instruction to carry out, not a turn to
+ * continue.
+ *
+ * The history is still rendered, because compaction must see the conversation
+ * it is condensing, but the role preamble and the closing line both name the
+ * trailing instruction as the task. See {@link SIDE_CHANNEL_ROLE} for the
+ * misread this replaces.
+ */
+export function renderSideChannelFeed(
+  system: string | undefined,
+  messages: readonly RequestMessage[],
+  imagePath?: ImagePathResolver,
+): Feed {
+  const history: Feed[] = []
+  for (const message of messages) {
+    const entry = renderMessage(message, imagePath)
+    if (feedToText(entry, imagePath).length > 0) history.push(entry)
+  }
+  const sections: Feed[] = [SIDE_CHANNEL_ROLE]
+  if (system !== undefined && system.length > 0) {
+    sections.push(`---- 宿主系统提示（作为你的行为准则） ----\n${system}`)
+  }
+  const first = history[0]
+  if (first !== undefined) {
+    sections.push(label('---- 宿主对话记录 ----\n', first))
+    sections.push(...history.slice(1))
+  }
+  sections.push('---- 以上是背景。请执行最后一条用户消息给出的任务。 ----')
+  return joinFeeds(sections)
 }
 
 /**
