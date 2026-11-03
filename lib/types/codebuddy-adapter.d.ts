@@ -89,6 +89,15 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
      */
     private resolveFeedImages;
     /**
+     * Images carried by the messages the inner session has not seen yet.
+     *
+     * Tool results are included: `read_image` hands its pixels back through the
+     * MCP tool result, not through the prompt text, so this tail is the only
+     * place the bytes can come from.
+     */
+    private resolveTurnImages;
+    private resolveImages;
+    /**
      * Turn a feed into what one CLI turn receives.
      *
      * A text-only feed stays a plain string (the historical shape). A feed with

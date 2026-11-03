@@ -106,6 +106,15 @@ export declare class MinimaxAdapter extends LlmAdapter {
      * keeps its handle text, so it degrades one part instead of failing the turn.
      */
     private buildFeed;
+    /**
+     * Images carried by the messages the inner session has not seen yet.
+     *
+     * Tool results are included: `read_image` hands its pixels back through the
+     * ACP tool result, not through the prompt text, so this tail is the only
+     * place the bytes can come from.
+     */
+    private resolveTurnImages;
+    private resolveImages;
     private cwdOf;
     close(): void;
 }

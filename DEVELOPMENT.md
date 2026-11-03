@@ -161,6 +161,12 @@
   执行世界；Qoder / CodeBuddy / MiniMax 在图片块前插入这条句柄，历史图片（rebuild 时按文本重放、
   不发像素）同样带路径。另外三个适配器都会记住每个路由上一次验证过的 `vision` 能力：目录某次读不到
   时不再谎报 text-only——那会让 DSH 在适配器之前就把像素剥成占位符。
+- **工具结果的图片走 MCP/ACP 结果通道**：`read_image` 把图片放在 tool 消息里返回，而这三条路由的
+  工具结果不经提示词 feed，而是由 `renderResultContent` / `renderCodeBuddyResult` /
+  `renderToolResult` 序列化成 MCP（或 ACP）结果。此前 CodeBuddy 把它换成
+  `[图片结果未转发给 CodeBuddy]`、MiniMax 退化成 JSON 文本，模型只看到路径、看不到像素。现在
+  适配器先对「未喂过的 tail」统一解析图片（`resolveTurnImages`，含 tool 消息），渲染器把可解析的
+  附件输出为 `{type:'image', data, mimeType}`，宿主读不到时退回 `textOnlyImageText` 句柄，不静默丢弃。
 - **CodeBuddy 额度**：SDK 没有额度方法，`readQuotaWithToken()` 用登录 token 调
   `POST /v2/billing/meter/get-user-resource`（国内与国际同协议），按积分包汇总实时余额；
   额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。卡片里的积分包

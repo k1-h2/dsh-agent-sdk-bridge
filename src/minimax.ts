@@ -32,12 +32,13 @@ import { Readable, Writable } from 'node:stream'
 import {
   ClientSideConnection, ndJsonStream, PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk'
-import { EMPTY_RESPONSE_CODE, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { EMPTY_RESPONSE_CODE, ToolCallId, textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type {
   FinishReason, GenerateOptions, RequestMessage, StreamChunk, TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import type { MinimaxRegion } from './brand.ts'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { minimaxCliRegion } from './brand.ts'
+import type { MinimaxRegion } from './brand.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { stripMcpNamespace } from './mcp-naming.ts'
@@ -74,7 +75,7 @@ export interface MinimaxModel {
 
 /** One tool call's result, in the shape the MCP bridge returns. */
 export interface MinimaxMcpToolResult {
-  content: { type: 'text', text: string }[]
+  content: ({ type: 'text', text: string } | { type: 'image', data: string, mimeType: string })[]
   isError?: boolean
 }
 
@@ -1124,8 +1125,18 @@ interface PendingHostCall {
   timer: NodeJS.Timeout
 }
 
-/** Render a harness tool result for the MCP caller. */
-function renderToolResult(content: unknown): MinimaxMcpToolResult {
+/**
+ * Render a harness tool result for the MCP caller.
+ *
+ * A tool result can carry pixels (`read_image` returns the picture beside its
+ * path envelope). The MCP result schema passes an image block straight to the
+ * agent, so a resolvable attachment becomes `{type:'image'}`; one the host
+ * could not read falls back to the harness handle text instead of vanishing.
+ */
+export function renderToolResult(
+  content: unknown,
+  images?: ReadonlyMap<string, { data: string, mediaType: string }>,
+): MinimaxMcpToolResult {
   const text = (value: unknown): string => {
     if (typeof value === 'string') return value
     if (value === null || value === undefined) return ''
@@ -1136,20 +1147,39 @@ function renderToolResult(content: unknown): MinimaxMcpToolResult {
     }
   }
   if (Array.isArray(content)) {
-    const parts: string[] = []
+    const parts: MinimaxMcpToolResult['content'] = []
+    let pending: string[] = []
+    const flush = (): void => {
+      if (pending.length === 0) return
+      parts.push({ type: 'text', text: pending.join('\n') })
+      pending = []
+    }
     for (const block of content) {
       if (typeof block === 'string') {
-        parts.push(block)
+        pending.push(block)
         continue
       }
-      if (block !== null && typeof block === 'object' && (block as { type?: unknown }).type === 'text') {
-        parts.push(text((block as { text?: unknown }).text))
-        continue
+      if (block !== null && typeof block === 'object') {
+        const typed = block as { type?: unknown, text?: unknown, attachment?: unknown }
+        if (typed.type === 'text') {
+          pending.push(text(typed.text))
+          continue
+        }
+        if (typed.type === 'image' && typed.attachment !== null && typeof typed.attachment === 'object') {
+          const attachment = typed.attachment as ImageAttachmentRef
+          const resolved = images?.get(String(attachment.attachmentId))
+          flush()
+          parts.push(resolved === undefined
+            ? { type: 'text', text: textOnlyImageText(attachment) }
+            : { type: 'image', data: resolved.data, mimeType: resolved.mediaType })
+          continue
+        }
       }
-      parts.push(text(block))
+      pending.push(text(block))
     }
-    const joined = parts.join('\n').trim()
-    return { content: [{ type: 'text', text: joined === '' ? '（宿主工具没有返回内容）' : joined }] }
+    flush()
+    if (parts.length === 0) return { content: [{ type: 'text', text: '（宿主工具没有返回内容）' }] }
+    return { content: parts }
   }
   const joined = text(content).trim()
   return { content: [{ type: 'text', text: joined === '' ? '（宿主工具没有返回内容）' : joined }] }
@@ -1928,7 +1958,10 @@ export class MinimaxSession {
   }
 
   /** Hand the host's tool results to parked handlers. */
-  deliverToolResults(tail: readonly { role: string, toolCallId?: unknown, content?: unknown, isError?: boolean }[]): void {
+  deliverToolResults(
+    tail: readonly { role: string, toolCallId?: unknown, content?: unknown, isError?: boolean }[],
+    images?: ReadonlyMap<string, { data: string, mediaType: string }>,
+  ): void {
     let freshUserTurn = false
     for (const message of tail) {
       if (message.role === 'user') {
@@ -1942,7 +1975,7 @@ export class MinimaxSession {
       clearTimeout(pending.timer)
       this.pending.delete(callId)
       pending.resolve({
-        ...renderToolResult(message.content),
+        ...renderToolResult(message.content, images),
         ...message.isError === true ? { isError: true } : {},
       })
     }

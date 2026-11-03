@@ -23,7 +23,8 @@ import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import type { Feed, ImagePathResolver } from './render.ts'
-import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from './render.ts'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from './render.ts'
 import type { ChannelContent } from './session.ts'
 
 /** The CodeBuddy provider route. */
@@ -224,10 +225,34 @@ export class CodeBuddyAdapter extends LlmAdapter {
     vision: boolean,
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
+    return await this.resolveImages(feedImageRefs(feed), vision, signal)
+  }
+
+  /**
+   * Images carried by the messages the inner session has not seen yet.
+   *
+   * Tool results are included: `read_image` hands its pixels back through the
+   * MCP tool result, not through the prompt text, so this tail is the only
+   * place the bytes can come from.
+   */
+  private async resolveTurnImages(
+    tail: readonly RequestMessage[],
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
+    const refs = tail.flatMap(message => message.role === 'assistant' ? [] : imageRefs(message.content))
+    return await this.resolveImages(refs, vision, signal)
+  }
+
+  private async resolveImages(
+    refs: readonly ImageAttachmentRef[],
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
     const map = new Map<string, { data: string, mediaType: string }>()
     const readImage = this.options.readImage
     if (!vision || readImage === undefined) return map
-    for (const ref of feedImageRefs(feed)) {
+    for (const ref of refs) {
       const key = String(ref.attachmentId)
       if (map.has(key)) continue
       try {
@@ -390,7 +415,12 @@ export class CodeBuddyAdapter extends LlmAdapter {
       return
     }
     const tail = options.messages.slice(session.fedMessages.length)
-    session.deliverToolResults(tail)
+    // Resolve images before the tool results are delivered: a tool result can
+    // carry pixels (`read_image`), and the MCP result is the only channel that
+    // reaches the inner model for this turn.
+    const vision = await this.modelVision(options.model)
+    const images = await this.resolveTurnImages(tail, vision, options.signal)
+    session.deliverToolResults(tail, images)
     const plan = planContinuation(session.fedMessages, options.messages)
     if (plan.rebuild) {
       this.sessions.dispose(sessionId)
@@ -404,7 +434,6 @@ export class CodeBuddyAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const vision = await this.modelVision(options.model)
     const feed = plan.feed === null
       ? null
       : await this.buildFeed(plan.feed, vision, options.signal)

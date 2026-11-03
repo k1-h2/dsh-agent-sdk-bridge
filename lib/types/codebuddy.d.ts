@@ -16,7 +16,7 @@ import type { RawLanguageModel } from '@tencent-ai/agent-sdk';
 import type { CodeBuddyRegion } from './brand.ts';
 import { CodeBuddyStateStore } from './codebuddy-state.ts';
 import type { Live } from './live.ts';
-import type { ChannelContent } from './session.ts';
+import type { ChannelContent, ResolvedImages, ToolResultPayload } from './session.ts';
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
 export declare const CODEBUDDY_DEFAULT_CONTEXT_WINDOW = 200000;
 /** Default output cap when the catalog declares none. */
@@ -346,7 +346,7 @@ export declare class CodeBuddySession {
         toolCallId?: unknown;
         content?: unknown;
         isError?: boolean;
-    }[]): void;
+    }[], images?: ResolvedImages): void;
     /** Run one host turn; `feed` is new user content, or null for a tool continuation. */
     stream(options: GenerateOptions, feed: string | ChannelContent[] | null): AsyncGenerator<StreamChunk>;
     /** Tear the inner CLI down; parked handlers settle with a cancellation. */
@@ -363,6 +363,8 @@ export declare class CodeBuddySession {
     private usage;
     private endTurn;
 }
+/** Render host tool-result blocks into the MCP content the inner model reads. */
+export declare function renderCodeBuddyResult(blocks: unknown, images?: ResolvedImages): ToolResultPayload['content'];
 /**
  * Warm sessions keyed by host session id. A region change retires the old
  * session rather than mutating one, because the CLI process was started with

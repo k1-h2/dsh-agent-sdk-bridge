@@ -30,7 +30,8 @@ import type { ImageRequestReader } from './adapter.ts'
 import type { Live } from './live.ts'
 import { readLive, readLiveOptional } from './live.ts'
 import type { Feed, ImagePathResolver } from './render.ts'
-import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from './render.ts'
+import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from './render.ts'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 
 /** The MiniMax Code provider route. */
 export const MINIMAX_PROVIDER = 'minimax-acp'
@@ -325,7 +326,12 @@ export class MinimaxAdapter extends LlmAdapter {
       return
     }
     const tail = options.messages.slice(session.fedMessages.length)
-    session.deliverToolResults(tail)
+    // Resolve images before the tool results are delivered: a tool result can
+    // carry pixels (`read_image`), and this ACP tool result is the only channel
+    // that reaches the inner model for the round.
+    const vision = await this.modelVision(model, region)
+    const images = await this.resolveTurnImages(tail, vision, options.signal)
+    session.deliverToolResults(tail, images)
     const plan = planContinuation(session.fedMessages, options.messages)
     if (plan.rebuild) {
       this.sessions.dispose(sessionId)
@@ -358,7 +364,6 @@ export class MinimaxAdapter extends LlmAdapter {
     session.ensureTools(options.tools ?? [])
     session.fedMessages = options.messages
     session.fedSystem = options.system
-    const vision = await this.modelVision(model, region)
     const feed = plan.feed === null
       ? null
       : await this.buildFeed(plan.feed, vision, options.signal)
@@ -418,22 +423,7 @@ export class MinimaxAdapter extends LlmAdapter {
   ): Promise<string | MinimaxPromptBlock[]> {
     if (typeof feed === 'string') return feed
     if (!vision) return feedToText(feed, this.options.imagePath)
-    const images = new Map<string, { data: string, mediaType: string }>()
-    const readImage = this.options.readImage
-    if (readImage !== undefined) {
-      for (const ref of feedImageRefs(feed)) {
-        const key = String(ref.attachmentId)
-        if (images.has(key)) continue
-        try {
-          const image = await readImage(ref, signal)
-          if (image !== undefined) {
-            images.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
-          }
-        } catch {
-          // Degrade this attachment to its handle text.
-        }
-      }
-    }
+    const images = await this.resolveImages(feedImageRefs(feed), vision, signal)
     const parts = resolvedFeedParts(feed, images)
     if (!parts.some(part => part.type !== 'text')) {
       return parts.map(part => part.type === 'text' ? part.text : '').join('\n\n')
@@ -458,6 +448,45 @@ export class MinimaxAdapter extends LlmAdapter {
       content.push({ type: 'image', data: part.data, mimeType: part.mediaType })
     }
     return content
+  }
+
+  /**
+   * Images carried by the messages the inner session has not seen yet.
+   *
+   * Tool results are included: `read_image` hands its pixels back through the
+   * ACP tool result, not through the prompt text, so this tail is the only
+   * place the bytes can come from.
+   */
+  private async resolveTurnImages(
+    tail: readonly RequestMessage[],
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
+    const refs = tail.flatMap(message => message.role === 'assistant' ? [] : imageRefs(message.content))
+    return await this.resolveImages(refs, vision, signal)
+  }
+
+  private async resolveImages(
+    refs: readonly ImageAttachmentRef[],
+    vision: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
+    const map = new Map<string, { data: string, mediaType: string }>()
+    const readImage = this.options.readImage
+    if (!vision || readImage === undefined) return map
+    for (const ref of refs) {
+      const key = String(ref.attachmentId)
+      if (map.has(key)) continue
+      try {
+        const image = await readImage(ref, signal)
+        if (image !== undefined) {
+          map.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
+        }
+      } catch {
+        // Degrade this attachment to its handle text.
+      }
+    }
+    return map
   }
 
   private cwdOf(options: GenerateOptions): string | undefined {

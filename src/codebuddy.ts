@@ -13,7 +13,8 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto'
-import { EMPTY_RESPONSE_CODE, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import { EMPTY_RESPONSE_CODE, ToolCallId, textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type {
   FinishReason, GenerateOptions, StreamChunk, TokenUsage,
 } from '@deepseek-ai/dsh-llm'
@@ -59,7 +60,7 @@ function toCodeBuddyUserMessage(
   }
 }
 import { MCP_SERVER_NAME, HostToolRegistry, ToolResultPairing, TurnQueue } from './session.ts'
-import type { ChannelContent, ToolResultPayload, ToolRegistryHost } from './session.ts'
+import type { ChannelContent, ResolvedImages, ToolResultPayload, ToolRegistryHost } from './session.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
 
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
@@ -1104,7 +1105,10 @@ export class CodeBuddySession {
   }
 
   /** Hand the host's tool results to parked or buffered handlers. */
-  deliverToolResults(tail: readonly { role: string, toolCallId?: unknown, content?: unknown, isError?: boolean }[]): void {
+  deliverToolResults(
+    tail: readonly { role: string, toolCallId?: unknown, content?: unknown, isError?: boolean }[],
+    images?: ResolvedImages,
+  ): void {
     let freshUserTurn = false
     const delivered = new Set<string>()
     for (const message of tail) {
@@ -1114,7 +1118,7 @@ export class CodeBuddySession {
       }
       if (message.role !== 'tool') continue
       delivered.add(this.pairing.deliver(String(message.toolCallId), {
-        content: renderCodeBuddyResult(message.content),
+        content: renderCodeBuddyResult(message.content, images),
         isError: message.isError === true,
       }))
     }
@@ -1493,12 +1497,21 @@ export class CodeBuddySession {
 }
 
 /** Render host tool-result blocks into the MCP content the inner model reads. */
-function renderCodeBuddyResult(blocks: unknown): ToolResultPayload['content'] {
+export function renderCodeBuddyResult(blocks: unknown, images?: ResolvedImages): ToolResultPayload['content'] {
   if (!Array.isArray(blocks)) return [{ type: 'text', text: String(blocks ?? '') }]
   const content: ToolResultPayload['content'] = []
   for (const block of blocks as { type?: string, text?: string, attachment?: unknown }[]) {
     if (block.type === 'text') content.push({ type: 'text', text: block.text ?? '' })
-    else if (block.type === 'image') content.push({ type: 'text', text: '[图片结果未转发给 CodeBuddy]' })
+    else if (block.type === 'image' && block.attachment !== null && typeof block.attachment === 'object') {
+      // A tool can return pixels (`read_image` does). The MCP result shape
+      // carries them as an image block; dropping them here was why the inner
+      // model could read a path in the result text but never see the picture.
+      const attachment = block.attachment as ImageAttachmentRef
+      const resolved = images?.get(String(attachment.attachmentId))
+      content.push(resolved === undefined
+        ? { type: 'text', text: textOnlyImageText(attachment) }
+        : { type: 'image', data: resolved.data, mimeType: resolved.mediaType })
+    }
     else content.push({ type: 'text', text: JSON.stringify(block) })
   }
   return content

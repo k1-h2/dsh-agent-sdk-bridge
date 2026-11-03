@@ -48,10 +48,14 @@ export interface MinimaxModel {
 }
 /** One tool call's result, in the shape the MCP bridge returns. */
 export interface MinimaxMcpToolResult {
-    content: {
+    content: ({
         type: 'text';
         text: string;
-    }[];
+    } | {
+        type: 'image';
+        data: string;
+        mimeType: string;
+    })[];
     isError?: boolean;
 }
 /**
@@ -272,6 +276,18 @@ type SessionEvent = {
     kind: 'closed';
     error: Error;
 };
+/**
+ * Render a harness tool result for the MCP caller.
+ *
+ * A tool result can carry pixels (`read_image` returns the picture beside its
+ * path envelope). The MCP result schema passes an image block straight to the
+ * agent, so a resolvable attachment becomes `{type:'image'}`; one the host
+ * could not read falls back to the harness handle text instead of vanishing.
+ */
+export declare function renderToolResult(content: unknown, images?: ReadonlyMap<string, {
+    data: string;
+    mediaType: string;
+}>): MinimaxMcpToolResult;
 /** Options for one ACP process. */
 interface MinimaxAcpOptions {
     region: MinimaxRegion;
@@ -487,7 +503,10 @@ export declare class MinimaxSession {
         toolCallId?: unknown;
         content?: unknown;
         isError?: boolean;
-    }[]): void;
+    }[], images?: ReadonlyMap<string, {
+        data: string;
+        mediaType: string;
+    }>): void;
     /** Run one harness turn. `feed` is new user content, or null for a continuation. */
     stream(options: GenerateOptions, feed: string | readonly MinimaxPromptBlock[] | null): AsyncGenerator<StreamChunk>;
     /** Tear the ACP process down; parked handlers settle with a cancellation. */
