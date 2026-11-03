@@ -79,17 +79,34 @@ const LOGOUT_TIMEOUT_MS = 20_000
 /** The session object the SDK's createSession returns (not a named export). */
 type SessionImpl = ReturnType<typeof import('@tencent-ai/agent-sdk').unstable_v2_createSession>
 
-const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
 /**
- * The same namespace after the CLI normalises the server name.
+ * The key this plugin's MCP server is registered under, in the CodeBuddy CLI.
  *
- * CodeBuddy rewrites every non-alphanumeric character in an MCP server name to
- * `_`, so a server registered as `dsh-host` is exposed to the model as
- * `mcp__dsh_host__<tool>`. Matching only the registered spelling rejected the
- * host's own tools as "built-ins", which is exactly why the model fell back to
- * `Bash`. The Qoder CLI keeps the hyphen, so both spellings are accepted.
+ * It is the CLI's own normalised spelling - `dsh_host`, not `dsh-host` - and
+ * that choice is the fix for the recurring "tool went missing": the CLI builds
+ * its call-time tool map from `mcp__<key>__<tool>` with the key verbatim,
+ * while several of its own code paths (`parseMcpToolName`, the plugin tool
+ * namer, the wire-format normaliser) rewrite every non-alphanumeric character
+ * to `_`. With a hyphenated key the list showed `mcp__dsh-host__read_files`
+ * while a model that emitted the normalised `mcp__dsh_host__read_files` - as
+ * one did, verbatim, in a failed session - found no entry, and the CLI refused
+ * the call with `Tool "..." does not exist in the current tool set.` before it
+ * ever reached this server. Registering under the normalised spelling makes
+ * list, lookup and normalisation one and the same name, so there is no second
+ * spelling to guess.
  */
-const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME.replace(/[^a-zA-Z0-9]/g, '_')}__`
+const CODEBUDDY_MCP_SERVER_KEY = 'dsh_host'
+
+const MCP_TOOL_PREFIX = `mcp__${CODEBUDDY_MCP_SERVER_KEY}__`
+/**
+ * The hyphenated spelling, kept for names already in flight.
+ *
+ * The server used to be keyed `dsh-host`; older prefixes and doubled forms can
+ * still carry `mcp__dsh-host__<tool>`, and both spellings name the same
+ * server, so the matcher accepts them all. See {@link CODEBUDDY_MCP_SERVER_KEY}
+ * for why the registered key itself is now the normalised spelling.
+ */
+const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME}__`
 /** Both spellings, in the order the shared stripper tries them. */
 const HOST_TOOL_PREFIXES = [MCP_TOOL_PREFIX, MCP_TOOL_PREFIX_SANITIZED]
 
@@ -1186,7 +1203,7 @@ export class CodeBuddySession {
   private async ensureStarted(): Promise<SessionImpl> {
     if (this.session !== null) return this.session
     const sdk = await loadCodeBuddySdk()
-    this.mcp ??= sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: [] })
+    this.mcp ??= sdk.createSdkMcpServer({ name: CODEBUDDY_MCP_SERVER_KEY, tools: [] })
     // Host tools must exist in the MCP server before the CLI lists them. The
     // registry is created here, with the server it installs into, and the
     // replay below is what puts the first turn's schemas in place.
@@ -1214,7 +1231,7 @@ export class CodeBuddySession {
       environment: codeBuddyEnvironment(this.region),
       sessionId: randomUUID(),
       model: this.model,
-      mcpServers: { [MCP_SERVER_NAME]: this.mcp },
+      mcpServers: { [CODEBUDDY_MCP_SERVER_KEY]: this.mcp },
       canUseTool: this.canUseTool as CanUseTool,
       // Only the host's MCP tools may run: the CLI's own Bash/Read/Edit have no
       // host-side counterpart, and the permission gate denies them anyway.

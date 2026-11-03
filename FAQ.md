@@ -129,6 +129,21 @@ CodeBuddy 那句显眼的报错。现在两条路径共用 `HostToolRegistry`，
 共用它，不再各写一份一层 `slice`。判据是 `test/mcp-naming.test.ts`，其中「双层前缀剥到
 `edit`」和「三家一致」两条在单层剥离下确认过是红的。
 
+
+**改完之后还是会报 `Tool "mcp__dsh_host__read_files" does not exist in the current tool set.`？** 也已修复，
+这是同一个症状的第三层：**模型发出的名字和 CLI 调用查找表里的名字拼写不一致**。CLI 建调用表时
+用的是注册键**原样**（过去是 `dsh-host`，于是键是 `mcp__dsh-host__read_files`），而它自己的多个
+代码路径（`parseMcpToolName`、插件工具命名、线上格式规范器）都会把服务器名里的非字母数字字符
+改写成 `_`。模型只要发出规范化拼写的 `mcp__dsh_host__read_files`——真实会话里就是这么发的——
+在 CLI 的查找表里就没有这个键，`findToolInMap` 只做大小写容错，于是在**到达本插件之前**就被
+CLI 拒了；上一轮的剥层修复（`hostToolName`）根本没机会运行。本地日志与会话记录里查不到这条
+报错，也是因为这个：报错发生在内层 CLI 里，只有截图能看到。
+
+修法是从源头消灭第二种拼写：注册键直接用 CLI 的规范形 `dsh_host`（`CODEBUDDY_MCP_SERVER_KEY`）。
+这样「模型看到的列表名 = CLI 调用表的键 = CLI 各处规范化输出」三者完全一致，无从猜错；旧的
+连字符拼写仍被 `isHostTool()` / `hostToolName()` 接受，在途的名字照常处理。判据是
+`test/codebuddy-session.test.ts`：「注册键为 `dsh_host`」与「识别 CLI 规范化拼写」两条。
+
 顺带一提：同一张截图里的 `cannot modify "…": file has not been read — read the file, then retry`
 是**另一回事**——那是 DSH 的 `dsh-tool-fs` 观测策略（`FS_NOT_OBSERVED`），要求改之前先读；
 它属于宿主侧的正常门禁，跟工具注册无关。模型当时也注意到了这一点（它说「要先 read」）。

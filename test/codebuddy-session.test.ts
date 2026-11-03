@@ -90,7 +90,11 @@ describe('CodeBuddySession host tools', () => {
     // `tools: []` is the CLI's documented "disable all built-in tools"; MCP
     // tools are not built-ins, so the host's own tools stay available.
     expect(fake.created[0].tools).toEqual([])
-    expect(fake.created[0].mcpServers['dsh-host']).toBeDefined()
+    // The key is the CLI's normalised spelling: its call-time tool map is keyed
+    // by this string verbatim, while its own normalisers emit `dsh_host`, so a
+    // hyphenated key left two spellings in play and the model's normalised call
+    // was refused with `does not exist in the current tool set`.
+    expect(fake.created[0].mcpServers['dsh_host']).toBeDefined()
     session.close()
   })
 
@@ -149,6 +153,30 @@ describe('CodeBuddySession host tools', () => {
     session.close()
   })
 
+  it('recognises the CLI-normalised spelling the model emits', async () => {
+    // The registration key is `dsh_host`, and the CLI's own normalisers
+    // (`parseMcpToolName`, the wire-format tool namer) rewrite server names to
+    // that same spelling — so the name a model emits after seeing the normalised
+    // form, `mcp__dsh_host__read_files`, is the primary spelling now. A model
+    // that spelled it the other way failed with `does not exist in the current
+    // tool set` before the call ever reached the host; that session is what this
+    // pins. The hyphenated form is still a host tool, only rare now.
+    for (const toolName of ['mcp__dsh_host__read_files', 'mcp__dsh-host__read_files']) {
+      fake.created.length = 0
+      fake.messages = [
+        { type: 'stream_event', event: { type: 'content_block_start', content_block: { type: 'tool_use', id: 'toolu_r', name: toolName, input: {} } } },
+        { type: 'stream_event', event: { type: 'message_stop' } },
+      ]
+
+      const session = new CodeBuddySession(`s-normalised-${toolName}`, 'model')
+      session.configure('global', 'model')
+      const chunks = await drain(session)
+
+      const call = chunks.find(chunk => chunk.type === 'tool-call-delta')
+      expect(call?.name).toBe('read_files')
+      session.close()
+    }
+  })
   it('forwards a host MCP tool call under its unprefixed name', async () => {
     // CodeBuddy rewrites the server name's hyphen to `_`; the Qoder CLI keeps
     // it. Both spellings name the same host tool and must be forwarded.
