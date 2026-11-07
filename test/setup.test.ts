@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  SCRIPT_NAME, cancelSetup, isSetupMode, readSetupStatus, setupScriptPath, startSetup,
+  SCRIPT_NAME, cancelSetup, compareVersions, isSetupMode, readSetupStatus, setupScriptPath, startSetup,
 } from '../src/setup.ts'
 import { brandProfile } from '../src/brand.ts'
 
@@ -57,20 +57,34 @@ describe('setup helper', () => {
   })
 
   it('reports the CLI build this plugin speaks, so a mismatch is visible early', () => {
-    // A session against the wrong CLI build dies with a bare exit code, so the
-    // page warns from this status before the user signs in. Both sides are read
-    // from disk; a machine without the CLI simply reports `installed: false`.
+    // A session against a CLI *older* than the SDK's pin dies with a bare exit
+    // code (1.1.81 removed the old worker handshake), so the page warns from
+    // this status before the user signs in. A NEWER build is not a mismatch:
+    // the CLI updates itself, and following it is the expected behaviour.
     const status = readSetupStatus('cn')
-    expect(status.requiredCliVersion).toMatch(/^\d+\.\d+\.\d+/)
+    expect(status.requiredCliVersion).toBeDefined()
     if (status.installed) {
       expect(typeof status.cliVersion === 'string' || status.cliVersion === undefined).toBe(true)
       expect(status.versionMismatch).toBe(
-        status.cliVersion === undefined ? undefined : status.cliVersion !== status.requiredCliVersion,
+        status.cliVersion === undefined
+          ? undefined
+          : compareVersions(status.cliVersion, status.requiredCliVersion!) < 0,
       )
     } else {
       expect(status.cliVersion).toBeUndefined()
       expect(status.versionMismatch).toBeUndefined()
     }
+  })
+
+  it('compares versions numerically, not as strings', () => {
+    // The point of the helper: "1.1.9" ranks BELOW "1.1.10", and a build newer
+    // than the pin must never be reported as outdated.
+    expect(compareVersions('1.1.9', '1.1.10')).toBe(-1)
+    expect(compareVersions('1.1.10', '1.1.9')).toBe(1)
+    expect(compareVersions('1.1.84', '1.1.81')).toBe(1)
+    expect(compareVersions('1.1.81', '1.1.84')).toBe(-1)
+    expect(compareVersions('1.1.81', '1.1.81')).toBe(0)
+    expect(compareVersions('2.0.0', '1.9.9')).toBe(1)
   })
 
   const windows = process.platform === 'win32'

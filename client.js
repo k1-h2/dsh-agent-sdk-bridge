@@ -95,8 +95,8 @@ window.__ModuleLoader__.load({
       cliLogoutConfirm: '确定要退出当前 Qoder 账号吗？退出后会关闭已打开的会话并清空额度，需要重新登录才能继续使用；CLI 本身不会被卸载。',
       cliLoggingOut: '正在退出登录…',
       cliLogoutOk: '已退出登录',
-      cliVersionMismatch: 'CLI 版本与插件不匹配：本机',
-      cliVersionMismatchTail: '，插件需要',
+      cliVersionMismatch: 'CLI 版本过旧：本机',
+      cliVersionMismatchTail: '，插件至少需要',
       intlNav: 'Qoder 国际版',
       intlTitle: 'Qoder 国际版',
       intlIntro: '国际版账户（qoder.com）的模型与额度。勾选要启用的模型，并为需要的模型指定上下文窗口。改动即时生效，无需重启。',
@@ -298,8 +298,8 @@ window.__ModuleLoader__.load({
       cliLogoutConfirm: 'Sign out of the current Qoder account? Open sessions will be closed and quota cleared; you will need to sign in again. The CLI itself stays installed.',
       cliLoggingOut: 'Signing out…',
       cliLogoutOk: 'Signed out',
-      cliVersionMismatch: 'CLI version does not match the plugin: this machine has',
-      cliVersionMismatchTail: 'but the plugin needs',
+      cliVersionMismatch: 'CLI too old: this machine has',
+      cliVersionMismatchTail: 'but the plugin needs at least',
       intlNav: 'Qoder International',
       intlTitle: 'Qoder International',
       intlIntro: 'Models and quota for the international account (qoder.com). Tick the models you want available and set a context window where needed. Changes apply immediately.',
@@ -2431,8 +2431,10 @@ window.__ModuleLoader__.load({
         brand.kind !== 'qoder' ? null : h('div', { style: css.group },
           h('h3', { style: css.h3 }, t(brand.cliGroupKey)),
           h('div', { style: css.note }, t(brand.cliHintKey)),
-          // Each SDK release pins one CLI build; a mismatch kills every session
-          // with a bare exit code, so warn before the user signs in or chats.
+          // The CLI moves on its own (`qodercli update`), so only a build older
+          // than the SDK's pin is reported: that is the one that fails every
+          // session with a bare exit code. A newer build is fine and follows
+          // upstream as the user expects.
           setup?.versionMismatch === true
             ? h('div', { style: { ...css.err, marginTop: '6px' } },
                 `${t('cliVersionMismatch')} ${setup.cliVersion ?? '?'} ${t('cliVersionMismatchTail')} ${setup.requiredCliVersion ?? '?'}`)

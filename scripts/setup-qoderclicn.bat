@@ -79,17 +79,24 @@ if defined CLIV (
     echo       [--] qoderclicn not found
 )
 
-rem The SDK speaks a wire protocol that is pinned to one CLI release. CLI
-rem 1.1.81 dropped the old SDK session handshake and exits 42 on it, which the
-rem settings page could only report as "process exited with code 42". Reading
-rem the requirement from the installed SDK keeps this helper on a version the
-rem plugin can actually talk to, instead of whatever latest happens to be.
+rem The SDK speaks a wire protocol pinned to one CLI release, and only a build
+rem OLDER than that pin is a problem: CLI 1.1.81 dropped the old SDK session
+rem handshake and exits 42 on it. A newer build that still speaks the protocol
+rem is fine (1.1.84 runs against the SDK pinned at 1.1.81), and the CLI updates
+rem itself, so this helper installs the pinned build only when what is present
+rem is older. It never downgrades a version the user has moved forward.
 set "WANTV="
 set "MANIFEST=%~dp0..\node_modules\@qodercn-ai\qodercn-agent-sdk\dist\runtime-manifest.json"
 if exist "%MANIFEST%" for /f "usebackq delims=" %%V in (`node -e "try{process.stdout.write(require(process.argv[1]).qoderCliVersion||'')}catch(e){}" "%MANIFEST%"`) do set "WANTV=%%V"
 set "PKGSPEC=%PKG%"
 if defined WANTV set "PKGSPEC=%PKG%@%WANTV%"
-if defined WANTV echo       [--] this plugin needs CLI !WANTV!
+if defined WANTV echo       [--] this plugin was tested with CLI !WANTV!
+
+rem OUTDATED=1 only when a required version exists and the installed one is
+rem numerically older. `node -e` does the comparing because cmd compares
+rem strings, where "1.1.9" ranks above "1.1.10".
+set "OUTDATED="
+if defined WANTV if defined CLIV for /f "usebackq delims=" %%R in (`node -e "const a=process.argv[1].split('.').map(Number),b=process.argv[2].split('.').map(Number);let r=0;for(let i=0;i<Math.max(a.length,b.length);i++){const d=(a[i]||0)-(b[i]||0);if(d){r=d^<0?-1:1;break}}process.stdout.write(r^<0?'1':'')" "!CLIV!" "!WANTV!"`) do set "OUTDATED=%%R"
 
 rem ------------------------------------------------------------- 3 install
 echo.
@@ -100,8 +107,8 @@ if not "%MODE%"=="setup" (
         echo             Run this script without an argument to install it.
         goto :fail
     )
-    if defined WANTV if not "!CLIV!"=="!WANTV!" (
-        echo       [X] installed !CLIV!, but this plugin needs !WANTV!.
+    if defined OUTDATED (
+        echo       [X] installed !CLIV!, but this plugin needs !WANTV! or newer.
         echo             Run this script without an argument to install it.
         goto :fail
     )
@@ -109,9 +116,8 @@ if not "%MODE%"=="setup" (
     goto :login
 )
 if defined QCMD (
-    if not defined WANTV goto :skipinstall
-    if "!CLIV!"=="!WANTV!" goto :skipinstall
-    echo       [--] installed !CLIV!, this plugin needs !WANTV! - reinstalling
+    if not defined OUTDATED goto :skipinstall
+    echo       [--] installed !CLIV! is older than !WANTV! - reinstalling
     goto :doinstall
 )
 :skipinstall

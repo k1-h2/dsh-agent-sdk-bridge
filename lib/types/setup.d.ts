@@ -103,6 +103,17 @@ export declare function readSetupStatus(brand?: QoderBrand): SetupStatus;
  */
 export declare function cancelSetup(brand: QoderBrand): boolean;
 /**
+ * Compare two dotted versions, numerically per segment.
+ *
+ * A plain string compare would rank `1.1.9` above `1.1.10`, which is exactly
+ * backwards for the decision this feeds.
+ *
+ * @param left - one version, e.g. `1.1.84`.
+ * @param right - the other, e.g. `1.1.81`.
+ * @returns negative when `left` is older, positive when newer, 0 when equal.
+ */
+export declare function compareVersions(left: string, right: string): number;
+/**
  * Abandon the running helper, if any.
  *
  * Called when the plugin is disposed. Killing `cmd.exe` does not reap the CLI it

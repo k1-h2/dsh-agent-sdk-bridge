@@ -244,11 +244,21 @@ export function readSetupStatus(brand: QoderBrand = 'cn'): SetupStatus {
     installed,
     ...cliVersion === undefined ? {} : { cliVersion },
     ...required === undefined ? {} : { requiredCliVersion: required },
-    // Unknown on either side is not a mismatch: a native build carries no
-    // manifest, and warning about a version nobody could read would be noise.
+    // Only an OLDER CLI is a problem. The SDK pins the build it was tested
+    // against, but the CLI is a separate package the user (or its own `update`
+    // command) may move ahead of that pin, and a newer build that still speaks
+    // the protocol works fine — verified: SDK 1.0.58 (pinned 1.1.81) runs
+    // catalog reads, quota and full turns on CLI 1.1.84. Warning on "not equal"
+    // turned a normal update into a standing error, and the bundled helper then
+    // pulled the CLI back down, which is the opposite of following upstream.
+    //
+    // Below the pin is the real failure mode: CLI 1.1.81 removed the
+    // worker-session handshake that older SDKs spoke, so every query dies with
+    // exit code 42 (`sdk_worker_removed`). Unknown on either side stays quiet —
+    // a native build carries no manifest.
     ...cliVersion === undefined || required === undefined
       ? {}
-      : { versionMismatch: cliVersion !== required },
+      : { versionMismatch: compareVersions(cliVersion, required) < 0 },
   }
   const run = current.get(brand)
   if (run === undefined) return { running: false, lines: [], truncated: false, ...build }
@@ -294,6 +304,31 @@ export function cancelSetup(brand: QoderBrand): boolean {
   run.finishedAt = Date.now()
   run.code = null
   return true
+}
+
+/**
+ * Compare two dotted versions, numerically per segment.
+ *
+ * A plain string compare would rank `1.1.9` above `1.1.10`, which is exactly
+ * backwards for the decision this feeds.
+ *
+ * @param left - one version, e.g. `1.1.84`.
+ * @param right - the other, e.g. `1.1.81`.
+ * @returns negative when `left` is older, positive when newer, 0 when equal.
+ */
+export function compareVersions(left: string, right: string): number {
+  const parse = (value: string): number[] =>
+    value.split(/[.-]/).map(part => {
+      const n = Number.parseInt(part, 10)
+      return Number.isFinite(n) ? n : 0
+    })
+  const a = parse(left)
+  const b = parse(right)
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0)
+    if (diff !== 0) return diff < 0 ? -1 : 1
+  }
+  return 0
 }
 
 /**
