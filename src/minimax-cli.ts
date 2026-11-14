@@ -35,23 +35,44 @@ const INSTALL_FLAGS = [
   '--foreground-scripts',
 ]
 
-function fromJsEntry(path: string): MinimaxCliSpec {
-  return { command: process.execPath, args: [path], cliPath: path }
+/**
+ * The Node interpreter that can load the CLI's native SQLite module.
+ *
+ * `@minimax-ai/code` is installed globally by npm, so its `better-sqlite3`
+ * build matches the Node npm used — the `node` on PATH. DSH's desktop host
+ * runs Electron, whose NODE_MODULE_VERSION differs; spawning `process.execPath`
+ * there makes `mcode acp` die before the ACP handshake ("ACP connection
+ * closed"). Prefer the npm shim's sibling node.exe when present, otherwise
+ * resolve `node` from PATH.
+ */
+function cliNodeCommand(shimDir?: string): string {
+  if (process.versions.electron === undefined) return process.execPath
+  if (shimDir !== undefined) {
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node'
+    const local = join(shimDir, exe)
+    if (existsSync(local)) return local
+  }
+  return 'node'
+}
+
+function fromJsEntry(path: string, nodeCommand: string = cliNodeCommand()): MinimaxCliSpec {
+  return { command: nodeCommand, args: [path], cliPath: path }
 }
 
 function fromShim(shim: string): MinimaxCliSpec | undefined {
   if (shim.endsWith('.cmd') || shim.endsWith('.bat')) {
     // npm's Windows shim forwards to the package's cli.js. Reading it avoids a
-    // cmd.exe layer, which keeps ACP's stdio byte-clean.
+    // cmd.exe layer, which keeps ACP's stdio byte-clean; the shim's own Node
+    // interpreter is kept so the native SQLite ABI still matches.
     try {
       const text = readFileSync(shim, 'utf8')
       const match = /["']([^"']*node_modules[\\/]@minimax-ai[\\/]code[\\/]cli\.js)["']/.exec(text)
-      if (match !== null && existsSync(match[1])) return fromJsEntry(match[1])
+      if (match !== null && existsSync(match[1])) return fromJsEntry(match[1], cliNodeCommand(dirname(shim)))
     } catch {
       // Fall through to the sibling-package guess below.
     }
     const sibling = join(dirname(shim), 'node_modules', '@minimax-ai', 'code', 'cli.js')
-    if (existsSync(sibling)) return fromJsEntry(sibling)
+    if (existsSync(sibling)) return fromJsEntry(sibling, cliNodeCommand(dirname(shim)))
     return {
       command: process.env.ComSpec ?? 'cmd.exe',
       args: ['/d', '/c', shim],
