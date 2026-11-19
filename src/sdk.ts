@@ -1,81 +1,77 @@
 /**
- * The SDK package behind each brand.
+ * The SDK package behind each brand, and the one daemon it keeps alive.
  *
  * The Qoder editions publish the same API under different scopes, so the rest
  * of the plugin imports this module instead of a package name. The CN SDK is a
- * real dependency and is loaded eagerly; the international one is optional at
- * runtime — a deployment that only has a CN account may not have it installed —
- * so it is imported on demand and its absence is reported to the settings page
- * as a plain error instead of failing the plugin's mount.
+ * real dependency; the international one is optional at runtime — a deployment
+ * that only has a CN account may not have it installed — so it is imported on
+ * demand and its absence is reported to the settings page as a plain error
+ * instead of failing the plugin's mount.
  *
- * CodeBuddy has its own, unrelated API and is loaded dynamically for the same
- * reason: an account may never use it, and its package carries a large CLI.
+ * ## The daemon, and why it has to be reset
  *
- * ## Why modules are reloaded
- *
- * Every Qoder SDK routes all queries through one **process-wide daemon** that
- * is initialized with the first query's launch configuration (CLI path,
- * interpreter, environment, proxy) and then refuses any different one for the
- * life of the process:
+ * Every Qoder SDK routes all queries through one **process-wide daemon**,
+ * initialized with the first query's launch configuration (CLI path,
+ * interpreter, environment, proxy, launch mode) and pinned to it for the life
+ * of the process:
  *
  *     DaemonConfigurationConflictError:
  *       Global daemon is already initialized with different options
  *
- * The host is long-lived, so its configuration is not: a CLI can be
- * reinstalled, an edition can appear, an installer can change the machine
- * environment. When that happens the ready daemon no longer matches and every
- * later query fails until the process restarts — a state the settings page
- * cannot recover from on its own.
+ * The host is long-lived, so the machine is not: the CLI updates itself,
+ * an edition appears, an installer changes the environment, a credential is
+ * refreshed. Any of those can leave the ready daemon holding a configuration
+ * (or a credential) that no longer applies, and from then on *every* query
+ * fails until DSH restarts — which is what the settings page reports as a
+ * signed-out account with no models and no quota.
  *
- * So the module tracks the configuration signature it loaded under and takes a
- * fresh instance whenever the signature changes; {@link resetSdk} does the same
- * after a conflict is observed. A new instance has an empty daemon registry, so
- * it initializes against the current configuration instead of arguing with the
- * old one.
+ * Two things keep that from happening:
+ *
+ * - **The launch configuration is frozen per process** ({@link cliOptions}).
+ *   Every call site used to call `qoderCliOptions()` for itself, so two
+ *   concurrent reads could describe the machine slightly differently and the
+ *   second one was rejected. One frozen object per edition means every query
+ *   in this process is identical by construction.
+ * - **A conflict is repaired, not reported** ({@link resetDaemon}). The SDK
+ *   exports `shutdownDaemon()`, which stops the daemon and clears the slot it
+ *   occupies, so the next query initializes a fresh one with the current
+ *   configuration. That is what makes sign-in, a CLI update and a credential
+ *   refresh take effect without restarting DSH.
  *
  * @module dsh-agent-sdk-bridge/sdk
  */
 
-import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
-import * as cnSdk from '@qodercn-ai/qodercn-agent-sdk'
 import type * as QoderSdk from '@qodercn-ai/qodercn-agent-sdk'
 import type * as CodeBuddySdk from '@tencent-ai/agent-sdk'
+import type { QoderCliOptions } from './cli.ts'
+import { qoderCliOptions } from './cli.ts'
 import type { CodeBuddyRegion, QoderBrand } from './brand.ts'
 import { brandProfile, codeBuddyEnvironment } from './brand.ts'
-import { qoderCliOptions } from './cli.ts'
 
 /** The subset of the Qoder SDK surface this plugin uses, as one module type. */
 export type QoderSdkModule = typeof QoderSdk
 /** The CodeBuddy SDK module, typed from its declarations. */
 export type CodeBuddySdkModule = typeof CodeBuddySdk
 
-/** One loaded generation: the configuration it was loaded for, and the module. */
-interface Generation {
+/** One edition's frozen launch configuration and the string that identifies it. */
+interface Pinned {
+  options: QoderCliOptions
   signature: string
-  module: Promise<QoderSdkModule>
 }
 
-const generations = new Map<QoderBrand, Generation>()
-/** Brands whose next load must take a fresh instance even if the signature matches. */
-const forced = new Set<QoderBrand>()
-let counter = 0
+const pinned = new Map<QoderBrand, Pinned>()
+const modules = new Map<QoderBrand, Promise<QoderSdkModule>>()
+/** Resets in flight, so a query cannot start against a daemon being stopped. */
+const resets = new Map<QoderBrand, Promise<void>>()
 let codeBuddySdk: Promise<CodeBuddySdkModule> | undefined
 
-const require = createRequire(import.meta.url)
-
 /**
- * The launch configuration a Qoder query would use, as a comparable string.
+ * Describe a launch configuration as a comparable string.
  *
- * Mirrors the fields the SDK's own daemon compares before reusing itself. The
- * environment is included because the SDK hands it to the CLI verbatim, and a
- * difference there is enough to make the daemon reject a query.
- *
- * @param brand - which edition's configuration to describe.
- * @returns a stable string that changes exactly when the configuration does.
+ * The fields are the ones the SDK's daemon compares before reusing itself. The
+ * environment is included because the SDK hands it to the CLI verbatim.
  */
-export function configurationSignature(brand: QoderBrand): string {
-  const options = qoderCliOptions(brand)
+function signatureOf(options: QoderCliOptions): string {
   const env = Object.entries(options.env ?? {})
     .filter(([, value]) => value !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -87,26 +83,48 @@ export function configurationSignature(brand: QoderBrand): string {
 }
 
 /**
- * Import one edition's SDK.
+ * This edition's launch configuration, computed once per process.
  *
- * A fresh instance is the same file imported under a unique URL: the module's
- * top-level daemon state is per instance, while the implementation is shared by
- * the module loader as usual.
+ * Frozen on purpose: the daemon accepts exactly one configuration, so every
+ * query has to send the same one. Recomputing it per call let concurrent
+ * reads disagree — a machine-wide `QODERCLI_PATH`, a CLI that finished
+ * updating between two calls, a PATH entry that appeared — and the daemon
+ * rejected whichever arrived second, permanently.
  *
- * @param brand - which edition to load.
- * @param fresh - ignore the already-loaded instance and take a new one.
+ * {@link resetDaemon} drops the pin, so a real change (install, sign-in, CLI
+ * update) is picked up by the next query instead of being frozen out.
+ *
+ * @param brand - which edition's configuration to return.
  */
-async function importSdk(brand: QoderBrand, fresh: boolean): Promise<QoderSdkModule> {
+export function cliOptions(brand: QoderBrand): QoderCliOptions {
+  const held = pinned.get(brand)
+  if (held !== undefined) return held.options
+  const options = qoderCliOptions(brand)
+  pinned.set(brand, { options, signature: signatureOf(options) })
+  return options
+}
+
+/**
+ * The signature of this edition's frozen configuration.
+ *
+ * Kept for diagnostics and tests: two calls in one process always agree, which
+ * is the property the daemon requires.
+ *
+ * @param brand - which edition to describe.
+ */
+export function configurationSignature(brand: QoderBrand): string {
+  cliOptions(brand)
+  return pinned.get(brand)?.signature ?? ''
+}
+
+/** Import one edition's SDK; a missing optional package is reported in context. */
+async function importSdk(brand: QoderBrand): Promise<QoderSdkModule> {
   const specifier = brandProfile(brand).sdkPackage
   try {
-    if (!fresh) return await import(/* @vite-ignore */ specifier) as QoderSdkModule
-    const entry = pathToFileURL(require.resolve(specifier)).href
-    counter += 1
-    return await import(/* @vite-ignore */ `${entry}?generation=${counter}`) as QoderSdkModule
+    return await import(/* @vite-ignore */ specifier) as QoderSdkModule
   } catch (error) {
     // Let a later read retry: the package may be installed while DSH is running.
-    generations.delete(brand)
-    forced.delete(brand)
+    modules.delete(brand)
     if (brand === 'cn') throw error
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`未安装国际版 SDK（${specifier}）：${detail}`)
@@ -114,60 +132,85 @@ async function importSdk(brand: QoderBrand, fresh: boolean): Promise<QoderSdkMod
 }
 
 /**
- * Load the SDK for one Qoder edition, under its current configuration.
+ * Load the SDK for one Qoder edition.
+ *
+ * One module instance per edition, reused for the process's lifetime: the
+ * daemon it owns is reset explicitly rather than by re-importing the package.
  *
  * @param brand - which edition's SDK to load.
- * @returns the SDK module.
  */
 export function loadSdk(brand: QoderBrand): Promise<QoderSdkModule> {
-  const signature = configurationSignature(brand)
-  const current = generations.get(brand)
-  if (current !== undefined && current.signature === signature && !forced.has(brand)) {
-    return current.module
+  // A reset that is still stopping the daemon must finish first: the next
+  // query has to initialize a fresh daemon, not attach to the one leaving.
+  const resetting = resets.get(brand)
+  if (resetting !== undefined) return resetting.then(() => loadSdk(brand))
+  let held = modules.get(brand)
+  if (held === undefined) {
+    held = importSdk(brand)
+    modules.set(brand, held)
+    held.catch(() => {
+      if (modules.get(brand) === held) modules.delete(brand)
+    })
   }
-  const mustReload = current !== undefined || forced.delete(brand)
-  const module = importSdk(brand, mustReload)
-  const generation = { signature, module }
-  generations.set(brand, generation)
-  module.catch(() => {
-    if (generations.get(brand) === generation) generations.delete(brand)
-  })
-  return module
+  return held
 }
 
 /**
- * Drop the loaded instance so the next {@link loadSdk} starts a new daemon.
+ * Stop this edition's daemon so the next query starts a clean one.
+ *
+ * Three situations need this, and they are not distinguishable from the
+ * outside — all three look like "the account is gone" until something resets:
+ *
+ * - the launch configuration changed since the daemon started;
+ * - the CLI was updated underneath it;
+ * - the credentials on disk changed (sign-in, sign-out, refresh) while the
+ *   daemon still holds the ones it loaded at start-up.
+ *
+ * `shutdownDaemon()` is the SDK's own way to clear the process-wide slot, so
+ * the next `query()` initializes against the current machine instead of
+ * arguing with a stale daemon until DSH restarts.
+ *
+ * @param brand - which edition's daemon to replace.
+ */
+export async function resetDaemon(brand: QoderBrand): Promise<void> {
+  // The pin is dropped first: whatever changed must be reflected in the
+  // configuration the new daemon is built with.
+  pinned.delete(brand)
+  const held = modules.get(brand)
+  if (held === undefined) return
+  const sdk = await held.catch(() => undefined)
+  if (sdk === undefined) {
+    modules.delete(brand)
+    return
+  }
+  try {
+    await sdk.shutdownDaemon()
+  } catch {
+    // Nothing running, or it died on its own: either way the slot is free.
+  }
+}
+
+/**
+ * Fire-and-forget {@link resetDaemon}.
+ *
+ * For callers that cannot await (a synchronous callback, a consumer loop that
+ * has already failed). The daemon is stopped in the background and the next
+ * query initializes a fresh one.
  *
  * @param brand - which edition to reset.
  */
 export function resetSdk(brand: QoderBrand): void {
-  generations.delete(brand)
-  forced.add(brand)
+  const previous = resets.get(brand) ?? Promise.resolve()
+  const next = previous.then(() => resetDaemon(brand)).catch(() => undefined)
+  resets.set(brand, next)
+  void next.finally(() => {
+    if (resets.get(brand) === next) resets.delete(brand)
+  })
 }
 
-/**
- * Drop the loaded generation and stop the daemon it started.
- *
- * A daemon loads the CLI's credentials when it initializes, and those
- * credentials are not part of the configuration signature: signing in as
- * another account leaves the daemon answering as the account it started with.
- * Shutting it down and forcing a new instance makes the next query read the
- * credentials that are on disk now.
- *
- * The generation is dropped synchronously, so a read that starts as soon as the
- * sign-in helper exits already gets the new instance; the old daemon is stopped
- * in the background because no caller can wait on the shutdown.
- *
- * @param brand - which edition's daemon to replace.
- */
+/** Alias kept for the logout path, whose wording is about discarding state. */
 export function discardSdk(brand: QoderBrand): void {
-  const generation = generations.get(brand)
-  generations.delete(brand)
-  forced.add(brand)
-  if (generation === undefined) return
-  void generation.module
-    .then(sdk => sdk.shutdownDaemon())
-    .catch(() => undefined)
+  void resetDaemon(brand)
 }
 
 /**
@@ -182,13 +225,10 @@ export function isDaemonConflict(error: unknown): boolean {
 }
 
 /**
- * Run one idempotent SDK operation, recovering from a daemon conflict once.
+ * Run one idempotent SDK operation, repairing a stale daemon once.
  *
- * A conflict means the daemon was initialized under a configuration that no
- * longer applies. A fresh module instance starts an empty daemon with the
- * current one, so the retry succeeds without a restart. Only use this for
- * operations that can be repeated without side effects (reads), never for a
- * turn that may already have emitted output.
+ * Only use this for operations that can be repeated without side effects
+ * (reads), never for a turn that may already have emitted output.
  *
  * @param brand - which edition to query.
  * @param run - the operation, given the module to use.
@@ -201,7 +241,7 @@ export async function withSdk<T>(
     return await run(await loadSdk(brand))
   } catch (error) {
     if (!isDaemonConflict(error)) throw error
-    resetSdk(brand)
+    await resetDaemon(brand)
     return await run(await loadSdk(brand))
   }
 }
@@ -222,7 +262,7 @@ export async function probeDaemon(brand: QoderBrand): Promise<void> {
   const q = sdk.query({
     prompt: (async function* () { await new Promise<never>(() => {}) })(),
     options: {
-      ...qoderCliOptions(brand),
+      ...cliOptions(brand),
       auth: sdk.qodercliAuth(),
       tools: [],
       allowedTools: [],

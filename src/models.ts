@@ -18,11 +18,11 @@ import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
 import type { QoderCatalogModel } from './catalog.ts'
 import { QODER_MODELS } from './catalog.ts'
-import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, resolveQoderCli } from './cli.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import type { QoderSdkModule } from './sdk.ts'
-import { withSdk } from './sdk.ts'
+import { cliOptions, resetDaemon, withSdk } from './sdk.ts'
 
 /** How long a fetched catalog stays fresh by default. */
 export const DEFAULT_MODEL_CACHE_TTL_MS = 5 * 60_000
@@ -207,14 +207,23 @@ export class QoderModelCatalog {
     // first query after the CLI was installed then conflicted with it for the
     // rest of the process's life (see `sdk.ts`).
     if (resolveQoderCli(this.brand) === undefined) throw new Error(cliConflictMessage(this.brand))
-    return withSdk(this.brand, sdk => this.read(sdk))
+    const first = await withSdk(this.brand, sdk => this.read(sdk))
+    if (first.length > 0) return first
+    // An empty catalogue is what a daemon answers after its credential went
+    // stale: the account lookup it makes first fails, so every `get_models`
+    // variant is empty and the page shows no models for a working account.
+    // Reset once so the replacement reads the credentials on disk now; keep the
+    // empty answer only if the retry is empty too (a plan really has none).
+    await resetDaemon(this.brand)
+    const retried = await withSdk(this.brand, sdk => this.read(sdk))
+    return retried.length > 0 ? retried : first
   }
 
   private async read(sdk: QoderSdkModule): Promise<readonly ModelInfo[]> {
     const q = sdk.query({
       prompt: inertInput(),
       options: {
-        ...qoderCliOptions(this.brand),
+        ...cliOptions(this.brand),
         auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],

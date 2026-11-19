@@ -18,12 +18,12 @@
 import type { AccountInfo, UsageInfo } from '@qodercn-ai/qodercn-agent-sdk'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
-import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from './cli.ts'
+import { cliConflictMessage, cliFailureText, foreignCliOverride, resolveQoderCli } from './cli.ts'
 import { withTimeout } from './models.ts'
 import type { QoderBrand } from './brand.ts'
 import { brandProfile } from './brand.ts'
 import type { QoderSdkModule } from './sdk.ts'
-import { withSdk } from './sdk.ts'
+import { cliOptions, resetDaemon, withSdk } from './sdk.ts'
 
 /** How long one quota reading stays fresh by default. */
 export const DEFAULT_USAGE_CACHE_TTL_MS = 60_000
@@ -137,7 +137,22 @@ export class QoderUsage {
       if (conflict !== undefined) {
         return { at, cliMissing: true, error: cliConflictMessage(this.brand) }
       }
-      return await withSdk(this.brand, sdk => this.readSnapshot(sdk, at))
+      const snapshot = await withSdk(this.brand, sdk => this.readSnapshot(sdk, at))
+      // No quota reading at all — including the case where the account is
+      // missing too — is the signature of a daemon that started before the
+      // credential was refreshed or replaced: it keeps presenting the identity
+      // it loaded at start-up, and the CLI answers nothing for it. That is what
+      // the page reported as "logged in but no quota", and it never healed
+      // because every later read reused the same daemon.
+      //
+      // Reset once and read again. The replacement process loads the
+      // credentials that are on disk *now*; the first reading is kept only when
+      // the retry cannot do better, so a genuinely empty account still renders
+      // its own message instead of a spurious error.
+      if (snapshot.usage !== undefined || snapshot.cliMissing === true) return snapshot
+      await resetDaemon(this.brand)
+      const retried = await withSdk(this.brand, sdk => this.readSnapshot(sdk, at))
+      return retried.usage !== undefined ? retried : snapshot
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       // The quota card is the first thing a user sees on a machine without the
@@ -156,7 +171,7 @@ export class QoderUsage {
     const q = sdk.query({
       prompt: inertInput(),
       options: {
-        ...qoderCliOptions(this.brand),
+        ...cliOptions(this.brand),
         auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],

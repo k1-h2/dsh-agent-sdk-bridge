@@ -1,42 +1,48 @@
 /**
- * The SDK package behind each brand.
+ * The SDK package behind each brand, and the one daemon it keeps alive.
  *
  * The Qoder editions publish the same API under different scopes, so the rest
  * of the plugin imports this module instead of a package name. The CN SDK is a
- * real dependency and is loaded eagerly; the international one is optional at
- * runtime — a deployment that only has a CN account may not have it installed —
- * so it is imported on demand and its absence is reported to the settings page
- * as a plain error instead of failing the plugin's mount.
+ * real dependency; the international one is optional at runtime — a deployment
+ * that only has a CN account may not have it installed — so it is imported on
+ * demand and its absence is reported to the settings page as a plain error
+ * instead of failing the plugin's mount.
  *
- * CodeBuddy has its own, unrelated API and is loaded dynamically for the same
- * reason: an account may never use it, and its package carries a large CLI.
+ * ## The daemon, and why it has to be reset
  *
- * ## Why modules are reloaded
- *
- * Every Qoder SDK routes all queries through one **process-wide daemon** that
- * is initialized with the first query's launch configuration (CLI path,
- * interpreter, environment, proxy) and then refuses any different one for the
- * life of the process:
+ * Every Qoder SDK routes all queries through one **process-wide daemon**,
+ * initialized with the first query's launch configuration (CLI path,
+ * interpreter, environment, proxy, launch mode) and pinned to it for the life
+ * of the process:
  *
  *     DaemonConfigurationConflictError:
  *       Global daemon is already initialized with different options
  *
- * The host is long-lived, so its configuration is not: a CLI can be
- * reinstalled, an edition can appear, an installer can change the machine
- * environment. When that happens the ready daemon no longer matches and every
- * later query fails until the process restarts — a state the settings page
- * cannot recover from on its own.
+ * The host is long-lived, so the machine is not: the CLI updates itself,
+ * an edition appears, an installer changes the environment, a credential is
+ * refreshed. Any of those can leave the ready daemon holding a configuration
+ * (or a credential) that no longer applies, and from then on *every* query
+ * fails until DSH restarts — which is what the settings page reports as a
+ * signed-out account with no models and no quota.
  *
- * So the module tracks the configuration signature it loaded under and takes a
- * fresh instance whenever the signature changes; {@link resetSdk} does the same
- * after a conflict is observed. A new instance has an empty daemon registry, so
- * it initializes against the current configuration instead of arguing with the
- * old one.
+ * Two things keep that from happening:
+ *
+ * - **The launch configuration is frozen per process** ({@link cliOptions}).
+ *   Every call site used to call `qoderCliOptions()` for itself, so two
+ *   concurrent reads could describe the machine slightly differently and the
+ *   second one was rejected. One frozen object per edition means every query
+ *   in this process is identical by construction.
+ * - **A conflict is repaired, not reported** ({@link resetDaemon}). The SDK
+ *   exports `shutdownDaemon()`, which stops the daemon and clears the slot it
+ *   occupies, so the next query initializes a fresh one with the current
+ *   configuration. That is what makes sign-in, a CLI update and a credential
+ *   refresh take effect without restarting DSH.
  *
  * @module dsh-agent-sdk-bridge/sdk
  */
 import type * as QoderSdk from '@qodercn-ai/qodercn-agent-sdk';
 import type * as CodeBuddySdk from '@tencent-ai/agent-sdk';
+import type { QoderCliOptions } from './cli.ts';
 import type { CodeBuddyRegion, QoderBrand } from './brand.ts';
 import { codeBuddyEnvironment } from './brand.ts';
 /** The subset of the Qoder SDK surface this plugin uses, as one module type. */
@@ -44,44 +50,67 @@ export type QoderSdkModule = typeof QoderSdk;
 /** The CodeBuddy SDK module, typed from its declarations. */
 export type CodeBuddySdkModule = typeof CodeBuddySdk;
 /**
- * The launch configuration a Qoder query would use, as a comparable string.
+ * This edition's launch configuration, computed once per process.
  *
- * Mirrors the fields the SDK's own daemon compares before reusing itself. The
- * environment is included because the SDK hands it to the CLI verbatim, and a
- * difference there is enough to make the daemon reject a query.
+ * Frozen on purpose: the daemon accepts exactly one configuration, so every
+ * query has to send the same one. Recomputing it per call let concurrent
+ * reads disagree — a machine-wide `QODERCLI_PATH`, a CLI that finished
+ * updating between two calls, a PATH entry that appeared — and the daemon
+ * rejected whichever arrived second, permanently.
  *
- * @param brand - which edition's configuration to describe.
- * @returns a stable string that changes exactly when the configuration does.
+ * {@link resetDaemon} drops the pin, so a real change (install, sign-in, CLI
+ * update) is picked up by the next query instead of being frozen out.
+ *
+ * @param brand - which edition's configuration to return.
+ */
+export declare function cliOptions(brand: QoderBrand): QoderCliOptions;
+/**
+ * The signature of this edition's frozen configuration.
+ *
+ * Kept for diagnostics and tests: two calls in one process always agree, which
+ * is the property the daemon requires.
+ *
+ * @param brand - which edition to describe.
  */
 export declare function configurationSignature(brand: QoderBrand): string;
 /**
- * Load the SDK for one Qoder edition, under its current configuration.
+ * Load the SDK for one Qoder edition.
+ *
+ * One module instance per edition, reused for the process's lifetime: the
+ * daemon it owns is reset explicitly rather than by re-importing the package.
  *
  * @param brand - which edition's SDK to load.
- * @returns the SDK module.
  */
 export declare function loadSdk(brand: QoderBrand): Promise<QoderSdkModule>;
 /**
- * Drop the loaded instance so the next {@link loadSdk} starts a new daemon.
+ * Stop this edition's daemon so the next query starts a clean one.
+ *
+ * Three situations need this, and they are not distinguishable from the
+ * outside — all three look like "the account is gone" until something resets:
+ *
+ * - the launch configuration changed since the daemon started;
+ * - the CLI was updated underneath it;
+ * - the credentials on disk changed (sign-in, sign-out, refresh) while the
+ *   daemon still holds the ones it loaded at start-up.
+ *
+ * `shutdownDaemon()` is the SDK's own way to clear the process-wide slot, so
+ * the next `query()` initializes against the current machine instead of
+ * arguing with a stale daemon until DSH restarts.
+ *
+ * @param brand - which edition's daemon to replace.
+ */
+export declare function resetDaemon(brand: QoderBrand): Promise<void>;
+/**
+ * Fire-and-forget {@link resetDaemon}.
+ *
+ * For callers that cannot await (a synchronous callback, a consumer loop that
+ * has already failed). The daemon is stopped in the background and the next
+ * query initializes a fresh one.
  *
  * @param brand - which edition to reset.
  */
 export declare function resetSdk(brand: QoderBrand): void;
-/**
- * Drop the loaded generation and stop the daemon it started.
- *
- * A daemon loads the CLI's credentials when it initializes, and those
- * credentials are not part of the configuration signature: signing in as
- * another account leaves the daemon answering as the account it started with.
- * Shutting it down and forcing a new instance makes the next query read the
- * credentials that are on disk now.
- *
- * The generation is dropped synchronously, so a read that starts as soon as the
- * sign-in helper exits already gets the new instance; the old daemon is stopped
- * in the background because no caller can wait on the shutdown.
- *
- * @param brand - which edition's daemon to replace.
- */
+/** Alias kept for the logout path, whose wording is about discarding state. */
 export declare function discardSdk(brand: QoderBrand): void;
 /**
  * Whether an error is the SDK's daemon refusing a different configuration.
@@ -90,13 +119,10 @@ export declare function discardSdk(brand: QoderBrand): void;
  */
 export declare function isDaemonConflict(error: unknown): boolean;
 /**
- * Run one idempotent SDK operation, recovering from a daemon conflict once.
+ * Run one idempotent SDK operation, repairing a stale daemon once.
  *
- * A conflict means the daemon was initialized under a configuration that no
- * longer applies. A fresh module instance starts an empty daemon with the
- * current one, so the retry succeeds without a restart. Only use this for
- * operations that can be repeated without side effects (reads), never for a
- * turn that may already have emitted output.
+ * Only use this for operations that can be repeated without side effects
+ * (reads), never for a turn that may already have emitted output.
  *
  * @param brand - which edition to query.
  * @param run - the operation, given the module to use.

@@ -1,16 +1,18 @@
 /**
- * The SDK keeps one process-wide daemon per edition and refuses a different
- * launch configuration once it is ready. A long-lived host outlives that
- * configuration, so the plugin has to notice the conflict and take a fresh
- * instance instead of failing every later query until a restart.
+ * The SDK keeps one process-wide daemon per edition, pinned to the launch
+ * configuration of its first query. A long-lived host outlives that
+ * configuration — the CLI updates itself, an edition appears, credentials are
+ * refreshed — and from then on every query is refused until the process
+ * restarts. The plugin therefore freezes the configuration it sends and resets
+ * the daemon through the SDK's own `shutdownDaemon()`.
  *
  * These cases cover the pure parts: the error shape, the message the page
- * shows, the retry contract, and the signature that decides when a new
- * instance is needed.
+ * shows, the retry contract, and the fact that the configuration is frozen
+ * until a reset asks for it to be recomputed.
  */
 import { describe, expect, it } from 'vitest'
 import { cliFailureText } from '../src/cli.ts'
-import { configurationSignature, isDaemonConflict, withSdk } from '../src/sdk.ts'
+import { configurationSignature, isDaemonConflict, resetDaemon, withSdk } from '../src/sdk.ts'
 
 /** The exact error the SDK raises when the daemon was initialized differently. */
 function conflict(): Error {
@@ -35,7 +37,7 @@ describe('SDK daemon recovery', () => {
     expect(text).toContain('already initialized')
   })
 
-  it('retries an idempotent read once against a fresh instance', async () => {
+  it('retries an idempotent read once after resetting the daemon', async () => {
     let calls = 0
     await expect(withSdk('cn', async () => {
       calls += 1
@@ -53,19 +55,24 @@ describe('SDK daemon recovery', () => {
     expect(calls).toBe(1)
   })
 
-  it('changes its signature exactly when the launch configuration does', () => {
+  it('freezes the launch configuration until a reset asks for it again', async () => {
     expect(configurationSignature('cn')).toBe(configurationSignature('cn'))
 
-    // A brand-specific CLI override is part of what the daemon compares, so a
-    // new value must force a new instance.
+    // The daemon compares one configuration for the life of the process, so a
+    // change on the machine must NOT silently produce a second one: it is
+    // picked up only after the daemon is reset.
     const before = configurationSignature('cn')
     const previous = process.env.QODERCN_CLI_PATH
-    process.env.QODERCN_CLI_PATH = 'C:/probe/another/qoderclicn.js'
+    process.env.QODERCN_CLI_PATH = process.execPath
     try {
+      expect(configurationSignature('cn')).toBe(before)
+
+      await resetDaemon('cn')
       expect(configurationSignature('cn')).not.toBe(before)
     } finally {
       if (previous === undefined) delete process.env.QODERCN_CLI_PATH
       else process.env.QODERCN_CLI_PATH = previous
+      await resetDaemon('cn')
     }
     expect(configurationSignature('cn')).toBe(before)
   })

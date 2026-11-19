@@ -25,7 +25,7 @@ import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 import { stripMcpNamespace } from './mcp-naming.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from './render.ts'
-import { isDaemonConflict, loadSdk, probeDaemon, resetSdk } from './sdk.ts'
+import { cliOptions, isDaemonConflict, loadSdk, probeDaemon, resetDaemon } from './sdk.ts'
 import { TurnOutputAccounting, estimateTextTokens } from './tokens.ts'
 
 /** MCP server name this adapter exposes host tools under. */
@@ -1054,7 +1054,7 @@ export class QoderSession {
     try {
       await probeDaemon(this.brand)
     } catch (error) {
-      if (isDaemonConflict(error)) resetSdk(this.brand)
+      if (isDaemonConflict(error)) await resetDaemon(this.brand)
     }
     // The SDK is brand-specific: the CN module speaks to qoderclicn and the
     // international one to qodercli, each against its own credentials.
@@ -1070,7 +1070,7 @@ export class QoderSession {
         // Spawn the CLI instead of running its runtime in a worker thread: in
         // this process that thread's sharp fights the host's own over the
         // libvips DLL every image needs. See `cli.ts`.
-        ...qoderCliOptions(this.brand),
+        ...cliOptions(this.brand),
         auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],
@@ -1444,7 +1444,7 @@ export class QoderSession {
       // the same way; dropping it here lets the next turn start a fresh daemon
       // instead of inheriting the broken one.
       if (isDaemonConflict(error)) {
-        resetSdk(this.brand)
+        await resetDaemon(this.brand)
         this.q = null
         void q.close().catch(() => undefined)
       }
@@ -1759,7 +1759,7 @@ export class QoderSessionManager {
     const q = sdk.query({
       prompt,
       options: {
-        ...qoderCliOptions(brand),
+        ...cliOptions(brand),
         auth: sdk.qodercliAuth(),
         tools: [],
         allowedTools: [],
@@ -1797,7 +1797,7 @@ export class QoderSessionManager {
         if (signal?.aborted !== true) {
           // Same poisoning as the warm path: drop the instance so the next
           // request starts a daemon that matches the current configuration.
-          if (isDaemonConflict(error)) resetSdk(brand)
+          if (isDaemonConflict(error)) await resetDaemon(brand)
           throw error
         }
       }
