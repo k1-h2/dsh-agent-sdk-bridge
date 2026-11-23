@@ -941,6 +941,19 @@ export class QoderSession {
   )
   private queue: TurnQueue | null = null
   private model: string
+  /**
+   * The model the inner process was started with, or `undefined` before it
+   * starts.
+   *
+   * `options.model` is read once, at spawn: qodercli keeps it as the session's
+   * own model, and every request it makes is billed under that model's key
+   * (`businessModelKey`, from `config.getModel()`) regardless of what the
+   * per-request policy answered. A user who switches model mid-conversation
+   * would therefore keep being billed as the model the session began with, so
+   * the adapter compares this against {@link model} and restarts the session
+   * when they differ — see {@link needsRestartForModel}.
+   */
+  private spawnedModel: string | undefined
   private reasoningEffort: string | undefined
   private callCounter = 0
   /**
@@ -1077,24 +1090,25 @@ export class QoderSession {
         canUseTool: this.canUseTool as CanUseTool,
         settingSources: [],
         includePartialMessages: true,
-        resolveModel: () => ({
-          model: this.model,
-          // The window travels with the model, because it is a property of the
-          // route rather than of one call. It has to be sent here: the CLI
-          // measures its `context_usage_ratio` against the window it is actually
-          // running with, so a deployment that declares 1M while the CLI still
-          // assumes the model's own 200K gets a ratio five times too large, and
-          // the meter that multiplies by the declared window inherits that error
-          // exactly (see `usage()` in this file).
-          ...this.reasoningEffort === undefined && this.contextWindow === undefined
-            ? {}
-            : {
-                parameters: {
-                  ...this.reasoningEffort === undefined ? {} : { reasoningEffort: this.reasoningEffort },
-                  ...this.contextWindow === undefined ? {} : { contextWindow: this.contextWindow },
-                },
-              },
-        }),
+        // The session's own model, not just the per-request override below.
+        //
+        // qodercli bills a request under `businessModelKey`, which it takes from
+        // `config.getModel()` — the model the *session* was started with — and
+        // not from whatever `get_model_policy` answered for that one call. Left
+        // unset, the session ran on the CLI's default (`auto`) while every
+        // inference was overridden to the user's model: the transcript recorded
+        // `dfmodel` on each assistant message, but each request was booked as
+        // `auto`, which is exactly what the provider's usage page showed as one
+        // DeepSeek-Flash request followed by a wall of Auto. `coldStream` has
+        // always passed this, which is why side-channel calls were attributed
+        // correctly while the main conversation was not.
+        model: this.model,
+        // The SDK's default is 500 ms, which a callback answering from another
+        // process cannot be relied on to beat while a turn is busy — and the
+        // expensive purposes (`compact`, `title`, `hook_prompt`) fire exactly
+        // then. A timeout is not a retry: the CLI falls back to its own router.
+        resolveModelTimeoutMs: 5_000,
+        resolveModel: (request?: { purpose?: string }) => this.modelPolicy(request?.purpose),
         mcpServers: { [MCP_SERVER_NAME]: this.mcp },
         allowedMcpServerNames: [MCP_SERVER_NAME],
         // Host prompt passes through verbatim: no qodercli preset, so its
@@ -1104,8 +1118,69 @@ export class QoderSession {
       },
     })
     this.q = q
+    // Recorded here rather than in the constructor: this is the value the CLI
+    // actually received, and {@link needsRestartForModel} compares against it.
+    this.spawnedModel = this.model
     void this.consume(q)
     return q
+  }
+
+  /**
+   * Whether the session must be replaced because the user switched model.
+   *
+   * The inner process takes `options.model` once, at spawn, and qodercli bills
+   * every request under that model's key. The per-request policy can change
+   * which model answers, but not which model is paid for — so a switch without
+   * a restart is invisible on the provider's usage page while the answers
+   * visibly change. Restarting is the only honest fix, and it costs one inner
+   * process per model switch rather than one per turn.
+   *
+   * @returns whether the session has to be rebuilt before streaming.
+   */
+  needsRestartForModel(): boolean {
+    return this.q !== null && this.spawnedModel !== this.model
+  }
+
+  /**
+   * Answer the CLI's per-request model question.
+   *
+   * `qodercli` sends `get_model_policy` before *every* LLM call it makes and
+   * records each one separately, so this decides which model answers each call.
+   * Only the main conversation is pinned to the user's choice: the other
+   * purposes are the CLI's own internal work — compaction, titles, hooks,
+   * subagents, the WebFetch secondary model — and it has its own routing for
+   * them. Forcing the main model onto those did not make them run on it; it made
+   * the CLI reject the answer and fall through to its own router.
+   *
+   * Returning an empty object means "no override": the CLI keeps whatever it
+   * resolved, and the request is attributed to the model that actually served it.
+   *
+   * @param purpose - the call's purpose, absent on older CLI builds.
+   * @returns the model policy for this request, or `{}` to leave it alone.
+   */
+  private modelPolicy(purpose: string | undefined): {
+    model?: string
+    parameters?: { reasoningEffort?: string, contextWindow?: number }
+  } {
+    if (purpose !== undefined && purpose !== 'main') return {}
+    return {
+      model: this.model,
+      // The window travels with the model, because it is a property of the
+      // route rather than of one call. It has to be sent here: the CLI
+      // measures its `context_usage_ratio` against the window it is actually
+      // running with, so a deployment that declares 1M while the CLI still
+      // assumes the model's own 200K gets a ratio five times too large, and
+      // the meter that multiplies by the declared window inherits that error
+      // exactly (see `usage()` in this file).
+      ...this.reasoningEffort === undefined && this.contextWindow === undefined
+        ? {}
+        : {
+            parameters: {
+              ...this.reasoningEffort === undefined ? {} : { reasoningEffort: this.reasoningEffort },
+              ...this.contextWindow === undefined ? {} : { contextWindow: this.contextWindow },
+            },
+          },
+    }
   }
 
   /** Point the session at a model and its per-request policy. */

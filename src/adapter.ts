@@ -694,6 +694,18 @@ export class QoderAdapter extends LlmAdapter {
       return
     }
     session.setModel(model, policy)
+    // The model is read once, when the inner process spawns, and qodercli bills
+    // every request under that key rather than under whatever the per-request
+    // policy answered (see `needsRestartForModel`). A session that outlives a
+    // model switch would keep billing the old one while the answers visibly
+    // changed, so the switch is answered the way a history divergence is —
+    // drop the session and rebuild it from the full conversation.
+    if (session.needsRestartForModel()) {
+      this.sessions.dispose(sessionId)
+      session = this.sessions.forSession(sessionId, model)
+      yield* this.firstTurn(session, options, model, policy, generation.vision)
+      return
+    }
     session.ensureTools(options.tools ?? [])
     session.recordRequestInput(options.system, options.messages)
     session.fedMessages = options.messages
